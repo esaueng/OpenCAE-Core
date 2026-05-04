@@ -20,6 +20,12 @@ importers:
 
   apps/web:
     dependencies:
+      '@opencae/core':
+        specifier: workspace:*
+        version: link:../../packages/core
+      '@opencae/examples':
+        specifier: workspace:*
+        version: link:../../packages/examples
       '@opencae/solver-webgpu':
         specifier: workspace:*
         version: link:../../packages/solver-webgpu
@@ -30,7 +36,11 @@ importers:
 
   packages/core: {}
 
-  packages/examples: {}
+  packages/examples:
+    dependencies:
+      '@opencae/core':
+        specifier: workspace:*
+        version: link:../core
 
   packages/solver-wasm: {}
 

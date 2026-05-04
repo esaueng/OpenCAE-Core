@@ -11,9 +11,13 @@
       "import": "./dist/index.js"
     }
   },
+  "dependencies": {
+    "@opencae/core": "workspace:*"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "lint": "pnpm run typecheck"
+    "lint": "pnpm run typecheck",
+    "test": "vitest run"
   }
 }

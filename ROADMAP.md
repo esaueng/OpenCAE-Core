@@ -6,6 +6,8 @@ Create the monorepo, documentation, TypeScript configuration, Vite web app, scop
 ## Phase 1 - Core FEA Model
 Define the minimal model structures needed for Tet4 linear static elasticity.
 
+Phase 1 adds solver-neutral OpenCAE native JSON model types, validation, normalization into typed arrays, and fixtures. It does not add solver math or visualization.
+
 ## Phase 2 - CPU Reference Tet4 Solver
 Build a CPU reference path for validation and baseline correctness.
 

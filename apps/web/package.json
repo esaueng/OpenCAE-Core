@@ -11,6 +11,8 @@
     "dev": "vite --host 127.0.0.1"
   },
   "dependencies": {
+    "@opencae/core": "workspace:*",
+    "@opencae/examples": "workspace:*",
     "@opencae/solver-webgpu": "workspace:*"
   },
   "devDependencies": {

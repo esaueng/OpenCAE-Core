@@ -1,7 +1,10 @@
+import { validateModelJson, type ValidationReport } from "@opencae/core";
+import { singleTetStaticFixture } from "@opencae/examples";
 import { detectWebGPUCapability, type WebGPUCapability } from "@opencae/solver-webgpu";
 
 export async function createApp(root: HTMLElement): Promise<void> {
   root.innerHTML = renderShell();
+  renderPhase1Validation(root);
 
   const statusElement = root.querySelector<HTMLElement>("[data-webgpu-status]");
   if (!statusElement) {
@@ -36,8 +39,18 @@ function renderShell(): string {
           <p>Checking local browser capability...</p>
         </section>
       </div>
+      <div data-phase1-validation></div>
     </section>
   `;
+}
+
+function renderPhase1Validation(root: HTMLElement): void {
+  const validationElement = root.querySelector<HTMLElement>("[data-phase1-validation]");
+  if (!validationElement) {
+    throw new Error("Phase 1 validation element was not found.");
+  }
+
+  validationElement.innerHTML = renderValidationReport(validateModelJson(singleTetStaticFixture));
 }
 
 function renderCapability(capability: WebGPUCapability): string {
@@ -62,6 +75,49 @@ function renderCapability(capability: WebGPUCapability): string {
       </dl>
       ${capability.adapter ? renderAdapter(capability.adapter) : ""}
     </section>
+  `;
+}
+
+function renderValidationReport(report: ValidationReport): string {
+  const modifier = report.ok ? "status-available" : "status-unavailable";
+  const issues = [...report.errors, ...report.warnings];
+
+  return `
+    <section class="status phase1-status ${modifier}">
+      <h2>Phase 1 fixture validation</h2>
+      <dl class="summary">
+        <div>
+          <dt>Fixture</dt>
+          <dd>single-tet-static</dd>
+        </div>
+        <div>
+          <dt>Status</dt>
+          <dd>${report.ok ? "Valid" : "Invalid"}</dd>
+        </div>
+        <div>
+          <dt>Issues</dt>
+          <dd>${issues.length}</dd>
+        </div>
+      </dl>
+      ${issues.length > 0 ? renderIssues(issues) : ""}
+    </section>
+  `;
+}
+
+function renderIssues(issues: ValidationReport["errors"]): string {
+  return `
+    <ul>
+      ${issues
+        .map(
+          (issue) => `
+            <li>
+              <strong>${escapeHtml(issue.code)}</strong>
+              <span>${escapeHtml(issue.path)}: ${escapeHtml(issue.message)}</span>
+            </li>
+          `
+        )
+        .join("")}
+    </ul>
   `;
 }
 
