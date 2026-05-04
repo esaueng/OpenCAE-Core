@@ -1,0 +1,19 @@
+{
+  "name": "@opencae/web",
+  "version": "0.1.0",
+  "description": "Web application shell for OpenCAE Core.",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "vite build",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "pnpm run typecheck",
+    "dev": "vite --host 127.0.0.1"
+  },
+  "dependencies": {
+    "@opencae/solver-webgpu": "workspace:*"
+  },
+  "devDependencies": {
+    "vite": "^5.4.21"
+  }
+}

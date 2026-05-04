@@ -1,0 +1,19 @@
+{
+  "name": "opencae-core",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Browser-local WebGPU finite element analysis core for web applications.",
+  "type": "module",
+  "scripts": {
+    "build": "pnpm -r --sort run build",
+    "test": "pnpm -r --if-present run test",
+    "lint": "pnpm -r --if-present run lint",
+    "typecheck": "pnpm -r --if-present run typecheck",
+    "dev": "pnpm --filter @opencae/web dev"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3",
+    "vite": "^5.4.21",
+    "vitest": "^1.6.1"
+  }
+}
