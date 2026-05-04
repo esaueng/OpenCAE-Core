@@ -13,6 +13,7 @@
   "dependencies": {
     "@opencae/core": "workspace:*",
     "@opencae/examples": "workspace:*",
+    "@opencae/solver-cpu": "workspace:*",
     "@opencae/solver-webgpu": "workspace:*"
   },
   "devDependencies": {

@@ -26,6 +26,9 @@ importers:
       '@opencae/examples':
         specifier: workspace:*
         version: link:../../packages/examples
+      '@opencae/solver-cpu':
+        specifier: workspace:*
+        version: link:../../packages/solver-cpu
       '@opencae/solver-webgpu':
         specifier: workspace:*
         version: link:../../packages/solver-webgpu
@@ -41,6 +44,16 @@ importers:
       '@opencae/core':
         specifier: workspace:*
         version: link:../core
+
+  packages/solver-cpu:
+    dependencies:
+      '@opencae/core':
+        specifier: workspace:*
+        version: link:../core
+    devDependencies:
+      '@opencae/examples':
+        specifier: workspace:*
+        version: link:../examples
 
   packages/solver-wasm: {}
 

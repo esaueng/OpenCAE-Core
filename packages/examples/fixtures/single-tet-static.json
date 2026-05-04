@@ -27,7 +27,15 @@
     },
     {
       "name": "loadNodes",
+      "nodes": [3]
+    },
+    {
+      "name": "supportYNodes",
       "nodes": [1]
+    },
+    {
+      "name": "supportZNodes",
+      "nodes": [2]
     }
   ],
   "elementSets": [
@@ -49,6 +57,18 @@
       "nodeSet": "fixedNodes",
       "component": "z",
       "value": 0
+    },
+    {
+      "name": "supportY",
+      "type": "fixed",
+      "nodeSet": "supportYNodes",
+      "components": ["y", "z"]
+    },
+    {
+      "name": "supportZ",
+      "type": "fixed",
+      "nodeSet": "supportZNodes",
+      "components": ["z"]
     }
   ],
   "loads": [
@@ -63,7 +83,7 @@
     {
       "name": "loadStep",
       "type": "staticLinear",
-      "boundaryConditions": ["fixedSupport", "settlement"],
+      "boundaryConditions": ["fixedSupport", "settlement", "supportY", "supportZ"],
       "loads": ["tipLoad"]
     }
   ]

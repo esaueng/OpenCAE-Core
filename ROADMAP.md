@@ -11,6 +11,8 @@ Phase 1 adds solver-neutral OpenCAE native JSON model types, validation, normali
 ## Phase 2 - CPU Reference Tet4 Solver
 Build a CPU reference path for validation and baseline correctness.
 
+Phase 2 adds `@opencae/solver-cpu` as a dense direct Tet4 linear static reference solver for small fixtures. It is not the production WebGPU solver.
+
 ## Phase 3 - WebGPU Infrastructure
 Add WebGPU device setup, buffers, compute pipeline utilities, and diagnostics.
 

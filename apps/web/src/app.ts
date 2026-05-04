@@ -1,10 +1,12 @@
 import { validateModelJson, type ValidationReport } from "@opencae/core";
 import { singleTetStaticFixture } from "@opencae/examples";
+import { solveStaticLinearTet4Cpu, type StaticLinearTet4CpuSolveResult } from "@opencae/solver-cpu";
 import { detectWebGPUCapability, type WebGPUCapability } from "@opencae/solver-webgpu";
 
 export async function createApp(root: HTMLElement): Promise<void> {
   root.innerHTML = renderShell();
   renderPhase1Validation(root);
+  renderPhase2CpuSummary(root);
 
   const statusElement = root.querySelector<HTMLElement>("[data-webgpu-status]");
   if (!statusElement) {
@@ -40,6 +42,7 @@ function renderShell(): string {
         </section>
       </div>
       <div data-phase1-validation></div>
+      <div data-phase2-cpu-summary></div>
     </section>
   `;
 }
@@ -51,6 +54,15 @@ function renderPhase1Validation(root: HTMLElement): void {
   }
 
   validationElement.innerHTML = renderValidationReport(validateModelJson(singleTetStaticFixture));
+}
+
+function renderPhase2CpuSummary(root: HTMLElement): void {
+  const summaryElement = root.querySelector<HTMLElement>("[data-phase2-cpu-summary]");
+  if (!summaryElement) {
+    throw new Error("Phase 2 CPU summary element was not found.");
+  }
+
+  summaryElement.innerHTML = renderCpuSolveSummary(solveStaticLinearTet4Cpu(singleTetStaticFixture));
 }
 
 function renderCapability(capability: WebGPUCapability): string {
@@ -74,6 +86,52 @@ function renderCapability(capability: WebGPUCapability): string {
         </div>
       </dl>
       ${capability.adapter ? renderAdapter(capability.adapter) : ""}
+    </section>
+  `;
+}
+
+function renderCpuSolveSummary(result: StaticLinearTet4CpuSolveResult): string {
+  const modifier = result.ok ? "status-available" : "status-unavailable";
+  const diagnostics = result.diagnostics;
+
+  return `
+    <section class="status phase2-status ${modifier}">
+      <h2>Phase 2 CPU reference solve</h2>
+      <dl class="summary">
+        <div>
+          <dt>Fixture</dt>
+          <dd>single-tet-static</dd>
+        </div>
+        <div>
+          <dt>Status</dt>
+          <dd>${result.ok ? "Solved" : "Failed"}</dd>
+        </div>
+        <div>
+          <dt>DOFs</dt>
+          <dd>${diagnostics?.dofs ?? "n/a"}</dd>
+        </div>
+        <div>
+          <dt>Free DOFs</dt>
+          <dd>${diagnostics?.freeDofs ?? "n/a"}</dd>
+        </div>
+        <div>
+          <dt>Constrained DOFs</dt>
+          <dd>${diagnostics?.constrainedDofs ?? "n/a"}</dd>
+        </div>
+        <div>
+          <dt>Relative residual</dt>
+          <dd>${formatNumber(diagnostics?.relativeResidual)}</dd>
+        </div>
+        <div>
+          <dt>Max displacement</dt>
+          <dd>${formatNumber(diagnostics?.maxDisplacement)}</dd>
+        </div>
+        <div>
+          <dt>Max von Mises stress</dt>
+          <dd>${formatNumber(diagnostics?.maxVonMisesStress)}</dd>
+        </div>
+      </dl>
+      ${result.ok ? "" : `<p>${escapeHtml(result.error.message)}</p>`}
     </section>
   `;
 }
@@ -167,4 +225,12 @@ function escapeHtml(value: string): string {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#039;");
+}
+
+function formatNumber(value: number | undefined): string {
+  if (value === undefined) {
+    return "n/a";
+  }
+
+  return Number.isFinite(value) ? value.toExponential(4) : "n/a";
 }

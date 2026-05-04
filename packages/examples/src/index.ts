@@ -30,7 +30,15 @@ export const singleTetStaticFixture = {
     },
     {
       name: "loadNodes",
+      nodes: [3]
+    },
+    {
+      name: "supportYNodes",
       nodes: [1]
+    },
+    {
+      name: "supportZNodes",
+      nodes: [2]
     }
   ],
   elementSets: [
@@ -52,6 +60,18 @@ export const singleTetStaticFixture = {
       nodeSet: "fixedNodes",
       component: "z",
       value: 0
+    },
+    {
+      name: "supportY",
+      type: "fixed",
+      nodeSet: "supportYNodes",
+      components: ["y", "z"]
+    },
+    {
+      name: "supportZ",
+      type: "fixed",
+      nodeSet: "supportZNodes",
+      components: ["z"]
     }
   ],
   loads: [
@@ -66,7 +86,7 @@ export const singleTetStaticFixture = {
     {
       name: "loadStep",
       type: "staticLinear",
-      boundaryConditions: ["fixedSupport", "settlement"],
+      boundaryConditions: ["fixedSupport", "settlement", "supportY", "supportZ"],
       loads: ["tipLoad"]
     }
   ]
@@ -108,6 +128,14 @@ export const twoTetStaticFixture = {
     {
       name: "loadNodes",
       nodes: [4]
+    },
+    {
+      name: "supportYNodes",
+      nodes: [1]
+    },
+    {
+      name: "supportZNodes",
+      nodes: [2]
     }
   ],
   elementSets: [
@@ -122,13 +150,25 @@ export const twoTetStaticFixture = {
       type: "fixed",
       nodeSet: "fixedNodes",
       components: ["x", "y", "z"]
+    },
+    {
+      name: "supportY",
+      type: "fixed",
+      nodeSet: "supportYNodes",
+      components: ["y", "z"]
+    },
+    {
+      name: "supportZ",
+      type: "fixed",
+      nodeSet: "supportZNodes",
+      components: ["z"]
     }
   ],
   steps: [
     {
       name: "loadStep",
       type: "staticLinear",
-      boundaryConditions: ["fixedSupport"],
+      boundaryConditions: ["fixedSupport", "supportY", "supportZ"],
       loads: ["tipLoad"]
     }
   ]

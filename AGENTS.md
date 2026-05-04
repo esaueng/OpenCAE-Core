@@ -19,6 +19,7 @@ Use the following naming convention:
 - root package: `opencae-core`
 - core package: `@opencae/core`
 - WebGPU solver package: `@opencae/solver-webgpu`
+- CPU reference solver package: `@opencae/solver-cpu`
 - Wasm solver package: `@opencae/solver-wasm`
 - viewer package: `@opencae/viewer`
 - examples package: `@opencae/examples`
@@ -34,6 +35,9 @@ Do not implement visualization.
 Do not implement CUDA.
 Do not implement a server-side solver.
 Do not implement CalculiX parsing.
+
+## Phase 2 Scope
+The CPU reference solver package is `@opencae/solver-cpu`. It is a dense small-fixture Tet4 linear static reference backend only, and solver logic must stay out of `@opencae/core`.
 
 ## Repository Workflow
 Always commit and push changes to the current branch.
