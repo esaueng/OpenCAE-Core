@@ -5,6 +5,7 @@ export type {
   CpuSolverOptions,
   DenseLinearSolveResult,
   DynamicLoadProfile,
+  DynamicResultField,
   DynamicTet4CpuDiagnostics,
   DynamicTet4CpuFrame,
   DynamicTet4CpuOptions,
@@ -23,5 +24,15 @@ export {
   computeVonMisesStress
 } from "./element";
 export { solveDenseLinearSystem } from "./linear-solve";
-export { solveDynamicTet4Cpu } from "./dynamic";
+export {
+  addSparseEntry,
+  conjugateGradient,
+  createSparseMatrixBuilder,
+  csrDiagonal,
+  csrMatVec,
+  reduceCsrSystem,
+  toCsrMatrix
+} from "./sparse";
+export type { ConjugateGradientResult, CsrMatrix, SparseMatrixBuilder } from "./sparse";
+export { solveDynamicTet4Cpu, solvePreviewSdofTet4Cpu } from "./dynamic";
 export { solveStaticLinearTet4Cpu } from "./solver";

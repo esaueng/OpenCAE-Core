@@ -1,11 +1,16 @@
 import {
+  OPENCAE_LEGACY_MODEL_SCHEMA_VERSION,
   OPENCAE_MODEL_SCHEMA,
   OPENCAE_MODEL_SCHEMA_VERSION,
+  type ElementType,
   type ValidationIssue,
   type ValidationReport
 } from "./model-json";
+import { computeTet4SignedVolume, connectedComponents, nodesPerElement } from "./topology";
 
 const COMPONENTS = new Set(["x", "y", "z"]);
+const ELEMENT_TYPES = new Set(["Tet4", "Tet10"]);
+const DYNAMIC_PROFILES = new Set(["step", "ramp", "quasi_static", "sinusoidal"]);
 
 export function validateModelJson(input: unknown): ValidationReport {
   const errors: ValidationIssue[] = [];
@@ -24,9 +29,12 @@ export function validateModelJson(input: unknown): ValidationReport {
     errors.push(issue("invalid-schema", "Model schema must be opencae.model.", "$.schema"));
   }
 
-  if (input.schemaVersion !== OPENCAE_MODEL_SCHEMA_VERSION) {
+  if (
+    input.schemaVersion !== OPENCAE_MODEL_SCHEMA_VERSION &&
+    input.schemaVersion !== OPENCAE_LEGACY_MODEL_SCHEMA_VERSION
+  ) {
     errors.push(
-      issue("invalid-schema-version", "Model schemaVersion must be 0.1.0.", "$.schemaVersion")
+      issue("invalid-schema-version", "Model schemaVersion must be 0.1.0 or 0.2.0.", "$.schemaVersion")
     );
   }
 
@@ -34,16 +42,39 @@ export function validateModelJson(input: unknown): ValidationReport {
   const nodeCount = validateCoordinates(coordinates, errors);
   const materials = validateMaterials(input.materials, errors);
   const materialNames = new Set(materials.names);
-  const totalElements = validateElementBlocks(input.elementBlocks, nodeCount, materialNames, errors);
-  const nodeSetNames = validateNodeSets(input.nodeSets, nodeCount, errors);
-  validateElementSets(input.elementSets, totalElements, errors);
-  const boundaryConditionNames = validateBoundaryConditions(
-    input.boundaryConditions,
-    nodeSetNames,
+  const elementValidation = validateElementBlocks(
+    input.elementBlocks,
+    coordinates,
+    nodeCount,
+    materialNames,
     errors
   );
-  const loadNames = validateLoads(input.loads, nodeSetNames, errors);
+  const nodeSetNames = validateNodeSets(input.nodeSets, nodeCount, errors);
+  validateElementSets(input.elementSets, elementValidation.totalElements, errors);
+  const surfaceFacetIds = validateSurfaceFacets(input.surfaceFacets, elementValidation.totalElements, nodeCount, errors);
+  const surfaceSetNames = validateSurfaceSets(input.surfaceSets, surfaceFacetIds, errors);
+  const boundaryConditionNames = validateBoundaryConditions(input.boundaryConditions, nodeSetNames, errors);
+  const loadNames = validateLoads(input.loads, nodeSetNames, surfaceSetNames, errors);
   validateSteps(input.steps, boundaryConditionNames, loadNames, errors);
+  validateCoordinateSystem(input.coordinateSystem, errors);
+  validateMeshConnections(input.meshConnections, errors);
+
+  if (
+    elementValidation.connectivityOk &&
+    elementValidation.totalElements > 1 &&
+    (!Array.isArray(input.meshConnections) || input.meshConnections.length === 0)
+  ) {
+    const components = connectedComponents({ elementBlocks: elementValidation.blocks });
+    if (components.componentCount > 1) {
+      errors.push(
+        issue(
+          "disconnected-bodies-without-connections",
+          "Geometry has disconnected bodies without contact/tie definitions.",
+          "$.elementBlocks"
+        )
+      );
+    }
+  }
 
   return report(errors);
 }
@@ -105,22 +136,14 @@ function validateMaterials(materials: unknown, errors: ValidationIssue[]): { nam
     }
 
     if (material.type !== "isotropicLinearElastic") {
-      errors.push(
-        issue("invalid-material-type", "Material type must be isotropicLinearElastic.", `${path}.type`)
-      );
+      errors.push(issue("invalid-material-type", "Material type must be isotropicLinearElastic.", `${path}.type`));
     }
 
     if (!isFiniteNumber(material.youngModulus) || material.youngModulus <= 0) {
-      errors.push(
-        issue("invalid-young-modulus", "youngModulus must be a positive finite number.", `${path}.youngModulus`)
-      );
+      errors.push(issue("invalid-young-modulus", "youngModulus must be a positive finite number.", `${path}.youngModulus`));
     }
 
-    if (
-      !isFiniteNumber(material.poissonRatio) ||
-      material.poissonRatio <= -1 ||
-      material.poissonRatio >= 0.5
-    ) {
+    if (!isFiniteNumber(material.poissonRatio) || material.poissonRatio <= -1 || material.poissonRatio >= 0.5) {
       errors.push(
         issue(
           "invalid-poisson-ratio",
@@ -129,6 +152,14 @@ function validateMaterials(materials: unknown, errors: ValidationIssue[]): { nam
         )
       );
     }
+
+    if (material.yieldStrength !== undefined && (!isFiniteNumber(material.yieldStrength) || material.yieldStrength <= 0)) {
+      errors.push(issue("invalid-yield-strength", "yieldStrength must be a positive finite number.", `${path}.yieldStrength`));
+    }
+
+    if (material.density !== undefined && (!isFiniteNumber(material.density) || material.density <= 0)) {
+      errors.push(issue("invalid-density", "density must be a positive finite number.", `${path}.density`));
+    }
   });
 
   return { names: validNames };
@@ -136,68 +167,98 @@ function validateMaterials(materials: unknown, errors: ValidationIssue[]): { nam
 
 function validateElementBlocks(
   elementBlocks: unknown,
+  coordinates: unknown,
   nodeCount: number,
   materialNames: Set<string>,
   errors: ValidationIssue[]
-): number {
+): { totalElements: number; connectivityOk: boolean; blocks: { name: string; type: ElementType; material: string; connectivity: number[] }[] } {
   if (!Array.isArray(elementBlocks)) {
     errors.push(issue("invalid-element-blocks", "elementBlocks must be an array.", "$.elementBlocks"));
-    return 0;
+    return { totalElements: 0, connectivityOk: false, blocks: [] };
   }
 
   const names = new Set<string>();
+  const blocks: { name: string; type: ElementType; material: string; connectivity: number[] }[] = [];
   let totalElements = 0;
+  let connectivityOk = true;
   elementBlocks.forEach((block, blockIndex) => {
     const path = `$.elementBlocks[${blockIndex}]`;
     if (!isRecord(block)) {
       errors.push(issue("invalid-element-block", "Element block must be an object.", path));
+      connectivityOk = false;
       return;
     }
 
-    if (!isNonEmptyString(block.name)) {
-      errors.push(issue("invalid-element-block-name", "Element block name must be a non-empty string.", `${path}.name`));
-    } else {
-      if (names.has(block.name)) {
-        errors.push(issue("duplicate-element-block-name", "Element block names must be unique.", `${path}.name`));
-      }
-      names.add(block.name);
-    }
-
-    if (block.type !== "Tet4") {
-      errors.push(issue("invalid-element-block-type", "Element block type must be Tet4.", `${path}.type`));
-    }
+    validateUniqueName(block.name, names, "element-block", `${path}.name`, errors);
 
     if (!isNonEmptyString(block.material) || !materialNames.has(block.material)) {
-      errors.push(
-        issue("missing-material-reference", "Element block material must reference an existing material.", `${path}.material`)
-      );
+      errors.push(issue("missing-material-reference", "Element block material must reference an existing material.", `${path}.material`));
+    }
+
+    if (block.type !== "Tet4" && block.type !== "Tet10") {
+      errors.push(issue("unsupported-element-type", "Element block type must be Tet4 or Tet10.", `${path}.type`));
+      connectivityOk = false;
+      return;
     }
 
     if (!Array.isArray(block.connectivity)) {
-      errors.push(issue("invalid-connectivity", "Tet4 connectivity must be an array.", `${path}.connectivity`));
+      errors.push(issue("invalid-connectivity", "Element connectivity must be an array.", `${path}.connectivity`));
+      connectivityOk = false;
       return;
     }
 
-    if (block.connectivity.length % 4 !== 0) {
+    const elementType = block.type as ElementType;
+    const nodesPer = nodesPerElement(elementType);
+    if (block.connectivity.length % nodesPer !== 0) {
       errors.push(
-        issue("invalid-connectivity-length", "Tet4 connectivity length must be divisible by 4.", `${path}.connectivity`)
+        issue(
+          "invalid-connectivity-length",
+          `${elementType} connectivity length must be divisible by ${nodesPer}.`,
+          `${path}.connectivity`
+        )
       );
+      connectivityOk = false;
     }
 
-    for (let i = 0; i < block.connectivity.length; i += 4) {
-      const tet = block.connectivity.slice(i, i + 4);
-      validateTetNodeIndices(tet, nodeCount, `${path}.connectivity`, i, errors);
-      if (tet.length === 4 && new Set(tet).size !== 4) {
-        errors.push(
-          issue("duplicate-tet-node", "Tet4 elements cannot repeat a node index.", `${path}.connectivity[${i}]`)
-        );
+    for (let i = 0; i < block.connectivity.length; i += nodesPer) {
+      const element = block.connectivity.slice(i, i + nodesPer);
+      let elementIndicesOk = element.length === nodesPer;
+      element.forEach((nodeIndex, localIndex) => {
+        const nodePath = `${path}.connectivity[${i + localIndex}]`;
+        if (!Number.isInteger(nodeIndex)) {
+          errors.push(issue("node-index-not-integer", `${elementType} node indices must be integers.`, nodePath));
+          elementIndicesOk = false;
+          return;
+        }
+        if (nodeIndex < 0 || nodeIndex >= nodeCount) {
+          errors.push(issue("node-index-out-of-range", `${elementType} node indices must reference existing nodes.`, nodePath));
+          elementIndicesOk = false;
+        }
+      });
+      if (element.length === nodesPer && new Set(element).size !== nodesPer) {
+        errors.push(issue("duplicate-tet-node", `${elementType} elements cannot repeat a node index.`, `${path}.connectivity[${i}]`));
+        elementIndicesOk = false;
       }
+      if (elementType === "Tet4" && elementIndicesOk && Array.isArray(coordinates)) {
+        const volume = computeTet4SignedVolume(coordinates, element);
+        if (!Number.isFinite(volume) || volume <= 0) {
+          errors.push(issue("non-positive-element-volume", "Tet4 element volume must be positive.", `${path}.connectivity[${i}]`));
+          elementIndicesOk = false;
+        }
+      }
+      connectivityOk = connectivityOk && elementIndicesOk;
     }
 
-    totalElements += Math.floor(block.connectivity.length / 4);
+    totalElements += Math.floor(block.connectivity.length / nodesPer);
+    blocks.push({
+      name: isNonEmptyString(block.name) ? block.name : `block-${blockIndex}`,
+      type: elementType,
+      material: isNonEmptyString(block.material) ? block.material : "",
+      connectivity: block.connectivity
+    });
   });
 
-  return totalElements;
+  return { totalElements, connectivityOk, blocks };
 }
 
 function validateNodeSets(nodeSets: unknown, nodeCount: number, errors: ValidationIssue[]): Set<string> {
@@ -235,15 +296,107 @@ function validateElementSets(elementSets: unknown, elementCount: number, errors:
   });
 }
 
+function validateSurfaceFacets(
+  surfaceFacets: unknown,
+  elementCount: number,
+  nodeCount: number,
+  errors: ValidationIssue[]
+): Set<number> {
+  if (surfaceFacets === undefined) return new Set();
+  if (!Array.isArray(surfaceFacets)) {
+    errors.push(issue("invalid-surface-facets", "surfaceFacets must be an array.", "$.surfaceFacets"));
+    return new Set();
+  }
+
+  const ids = new Set<number>();
+  surfaceFacets.forEach((facet, index) => {
+    const path = `$.surfaceFacets[${index}]`;
+    if (!isRecord(facet)) {
+      errors.push(issue("invalid-surface-facet", "Surface facet must be an object.", path));
+      return;
+    }
+    const id = facet.id;
+    if (!isInteger(id)) {
+      errors.push(issue("invalid-surface-facet-id", "Surface facet id must be an integer.", `${path}.id`));
+    } else {
+      if (ids.has(id)) errors.push(issue("duplicate-surface-facet-id", "Surface facet ids must be unique.", `${path}.id`));
+      ids.add(id);
+    }
+    const element = facet.element;
+    if (!isInteger(element) || element < 0 || element >= elementCount) {
+      errors.push(issue("surface-facet-element-out-of-range", "Surface facet element must reference an element.", `${path}.element`));
+    }
+    const elementFace = facet.elementFace;
+    if (!isInteger(elementFace) || elementFace < 0) {
+      errors.push(issue("invalid-surface-facet-face", "Surface facet elementFace must be a non-negative integer.", `${path}.elementFace`));
+    }
+    if (!Array.isArray(facet.nodes) || facet.nodes.length < 3) {
+      errors.push(issue("invalid-surface-facet-nodes", "Surface facet nodes must contain at least three nodes.", `${path}.nodes`));
+    } else {
+      facet.nodes.forEach((node, nodeIndex) => {
+        if (!Number.isInteger(node)) {
+          errors.push(issue("surface-facet-node-not-integer", "Surface facet node indices must be integers.", `${path}.nodes[${nodeIndex}]`));
+        } else if (node < 0 || node >= nodeCount) {
+          errors.push(issue("surface-facet-node-out-of-range", "Surface facet nodes must reference existing nodes.", `${path}.nodes[${nodeIndex}]`));
+        }
+      });
+    }
+    if (facet.area !== undefined && (!isFiniteNumber(facet.area) || facet.area <= 0)) {
+      errors.push(issue("invalid-surface-facet-area", "Surface facet area must be positive when provided.", `${path}.area`));
+    }
+    validateOptionalVector3(facet.normal, `${path}.normal`, "invalid-surface-facet-normal", errors);
+    validateOptionalVector3(facet.center, `${path}.center`, "invalid-surface-facet-center", errors);
+  });
+  return ids;
+}
+
+function validateSurfaceSets(
+  surfaceSets: unknown,
+  surfaceFacetIds: Set<number>,
+  errors: ValidationIssue[]
+): Set<string> {
+  if (surfaceSets === undefined) return new Set();
+  if (!Array.isArray(surfaceSets)) {
+    errors.push(issue("invalid-surface-sets", "surfaceSets must be an array.", "$.surfaceSets"));
+    return new Set();
+  }
+  const names = new Set<string>();
+  surfaceSets.forEach((surfaceSet, index) => {
+    const path = `$.surfaceSets[${index}]`;
+    if (!isRecord(surfaceSet)) {
+      errors.push(issue("invalid-surface-set", "Surface set must be an object.", path));
+      return;
+    }
+    validateUniqueName(surfaceSet.name, names, "surface-set", `${path}.name`, errors);
+    if (!Array.isArray(surfaceSet.facets)) {
+      errors.push(issue("invalid-surface-set", "facets must be an array.", `${path}.facets`));
+      return;
+    }
+    if (surfaceSet.facets.length === 0) {
+      errors.push(issue("empty-surface-set", "Surface sets must contain at least one facet.", `${path}.facets`));
+    }
+    const seen = new Set<number>();
+    surfaceSet.facets.forEach((facet, facetIndex) => {
+      const facetPath = `${path}.facets[${facetIndex}]`;
+      if (!Number.isInteger(facet)) {
+        errors.push(issue("surface-set-facet-not-integer", "Surface set facet ids must be integers.", facetPath));
+      } else if (!surfaceFacetIds.has(facet)) {
+        errors.push(issue("surface-set-facet-missing", "Surface set facets must reference existing surface facets.", facetPath));
+      }
+      if (seen.has(facet)) errors.push(issue("duplicate-surface-set-facet", "Surface set facets must be unique.", facetPath));
+      seen.add(facet);
+    });
+  });
+  return names;
+}
+
 function validateBoundaryConditions(
   boundaryConditions: unknown,
   nodeSetNames: Set<string>,
   errors: ValidationIssue[]
 ): Set<string> {
   if (!Array.isArray(boundaryConditions)) {
-    errors.push(
-      issue("invalid-boundary-conditions", "boundaryConditions must be an array.", "$.boundaryConditions")
-    );
+    errors.push(issue("invalid-boundary-conditions", "boundaryConditions must be an array.", "$.boundaryConditions"));
     return new Set();
   }
 
@@ -269,29 +422,22 @@ function validateBoundaryConditions(
     if (bc.type === "prescribedDisplacement") {
       validateComponent(bc.component, `${path}.component`, errors);
       if (!isFiniteNumber(bc.value)) {
-        errors.push(
-          issue(
-            "invalid-prescribed-displacement-value",
-            "prescribed displacement value must be finite.",
-            `${path}.value`
-          )
-        );
+        errors.push(issue("invalid-prescribed-displacement-value", "prescribed displacement value must be finite.", `${path}.value`));
       }
       return;
     }
 
-    errors.push(
-      issue(
-        "invalid-boundary-condition-type",
-        "Boundary condition type must be fixed or prescribedDisplacement.",
-        `${path}.type`
-      )
-    );
+    errors.push(issue("invalid-boundary-condition-type", "Boundary condition type must be fixed or prescribedDisplacement.", `${path}.type`));
   });
   return names;
 }
 
-function validateLoads(loads: unknown, nodeSetNames: Set<string>, errors: ValidationIssue[]): Set<string> {
+function validateLoads(
+  loads: unknown,
+  nodeSetNames: Set<string>,
+  surfaceSetNames: Set<string>,
+  errors: ValidationIssue[]
+): Set<string> {
   if (!Array.isArray(loads)) {
     errors.push(issue("invalid-loads", "loads must be an array.", "$.loads"));
     return new Set();
@@ -305,13 +451,25 @@ function validateLoads(loads: unknown, nodeSetNames: Set<string>, errors: Valida
       return;
     }
     validateUniqueName(load.name, names, "load", `${path}.name`, errors);
-    if (load.type !== "nodalForce") {
-      errors.push(issue("invalid-load-type", "Load type must be nodalForce.", `${path}.type`));
+    if (load.type === "nodalForce") {
+      validateNodeSetReference(load.nodeSet, nodeSetNames, `${path}.nodeSet`, errors);
+      validateVector3(load.vector, `${path}.vector`, "invalid-load-vector", "Nodal force vector must contain three finite numbers.", errors);
+      return;
     }
-    validateNodeSetReference(load.nodeSet, nodeSetNames, `${path}.nodeSet`, errors);
-    if (!Array.isArray(load.vector) || load.vector.length !== 3 || !load.vector.every(isFiniteNumber)) {
-      errors.push(issue("invalid-load-vector", "Nodal force vector must contain three finite numbers.", `${path}.vector`));
+    if (load.type === "surfaceForce") {
+      validateSurfaceSetReference(load.surfaceSet, surfaceSetNames, `${path}.surfaceSet`, errors);
+      validateVector3(load.totalForce, `${path}.totalForce`, "invalid-load-vector", "Surface force totalForce must contain three finite numbers.", errors);
+      return;
     }
+    if (load.type === "pressure") {
+      validateSurfaceSetReference(load.surfaceSet, surfaceSetNames, `${path}.surfaceSet`, errors);
+      if (!isFiniteNumber(load.pressure)) {
+        errors.push(issue("invalid-pressure", "Pressure load pressure must be finite.", `${path}.pressure`));
+      }
+      validateOptionalVector3(load.direction, `${path}.direction`, "invalid-pressure-direction", errors);
+      return;
+    }
+    errors.push(issue("invalid-load-type", "Load type must be nodalForce, surfaceForce, or pressure.", `${path}.type`));
   });
   return names;
 }
@@ -335,17 +493,60 @@ function validateSteps(
       return;
     }
     validateUniqueName(step.name, names, "step", `${path}.name`, errors);
-    if (step.type !== "staticLinear") {
-      errors.push(issue("invalid-step-type", "Step type must be staticLinear.", `${path}.type`));
+    if (step.type !== "staticLinear" && step.type !== "dynamicLinear") {
+      errors.push(issue("invalid-step-type", "Step type must be staticLinear or dynamicLinear.", `${path}.type`));
     }
-    validateNameReferenceArray(
-      step.boundaryConditions,
-      boundaryConditionNames,
-      "missing-boundary-condition-reference",
-      `${path}.boundaryConditions`,
-      errors
-    );
+    validateNameReferenceArray(step.boundaryConditions, boundaryConditionNames, "missing-boundary-condition-reference", `${path}.boundaryConditions`, errors);
     validateNameReferenceArray(step.loads, loadNames, "missing-load-reference", `${path}.loads`, errors);
+    if (step.type === "dynamicLinear") {
+      validateFinite(step.startTime, `${path}.startTime`, "invalid-dynamic-time", errors);
+      validateFinite(step.endTime, `${path}.endTime`, "invalid-dynamic-time", errors);
+      validatePositive(step.timeStep, `${path}.timeStep`, "invalid-dynamic-time-step", errors);
+      validatePositive(step.outputInterval, `${path}.outputInterval`, "invalid-dynamic-output-interval", errors);
+      if (isFiniteNumber(step.startTime) && isFiniteNumber(step.endTime) && step.endTime <= step.startTime) {
+        errors.push(issue("invalid-dynamic-time-range", "Dynamic step endTime must be greater than startTime.", `${path}.endTime`));
+      }
+      if (typeof step.loadProfile !== "string" || !DYNAMIC_PROFILES.has(step.loadProfile)) {
+        errors.push(issue("invalid-dynamic-load-profile", "Dynamic loadProfile must be step, ramp, quasi_static, or sinusoidal.", `${path}.loadProfile`));
+      }
+      validateOptionalNonNegative(step.dampingRatio, `${path}.dampingRatio`, "invalid-damping-ratio", errors);
+      validateOptionalNonNegative(step.rayleighAlpha, `${path}.rayleighAlpha`, "invalid-rayleigh-alpha", errors);
+      validateOptionalNonNegative(step.rayleighBeta, `${path}.rayleighBeta`, "invalid-rayleigh-beta", errors);
+    }
+  });
+}
+
+function validateCoordinateSystem(coordinateSystem: unknown, errors: ValidationIssue[]): void {
+  if (coordinateSystem === undefined) return;
+  if (!isRecord(coordinateSystem)) {
+    errors.push(issue("invalid-coordinate-system", "coordinateSystem must be an object.", "$.coordinateSystem"));
+    return;
+  }
+  if (coordinateSystem.solverUnits !== "m-N-s-Pa" && coordinateSystem.solverUnits !== "mm-N-s-MPa") {
+    errors.push(issue("invalid-solver-units", "solverUnits must be m-N-s-Pa or mm-N-s-MPa.", "$.coordinateSystem.solverUnits"));
+  }
+  if (coordinateSystem.renderCoordinateSpace !== undefined && typeof coordinateSystem.renderCoordinateSpace !== "string") {
+    errors.push(issue("invalid-render-coordinate-space", "renderCoordinateSpace must be a string.", "$.coordinateSystem.renderCoordinateSpace"));
+  }
+}
+
+function validateMeshConnections(meshConnections: unknown, errors: ValidationIssue[]): void {
+  if (meshConnections === undefined) return;
+  if (!Array.isArray(meshConnections)) {
+    errors.push(issue("invalid-mesh-connections", "meshConnections must be an array.", "$.meshConnections"));
+    return;
+  }
+  meshConnections.forEach((connection, index) => {
+    const path = `$.meshConnections[${index}]`;
+    if (!isRecord(connection)) {
+      errors.push(issue("invalid-mesh-connection", "Mesh connection must be an object.", path));
+      return;
+    }
+    if (connection.type !== "tie" && connection.type !== "contact" && connection.type !== "fuse") {
+      errors.push(issue("invalid-mesh-connection-type", "Mesh connection type must be tie, contact, or fuse.", `${path}.type`));
+    }
+    if (!isNonEmptyString(connection.source)) errors.push(issue("invalid-mesh-connection-source", "Mesh connection source must be a string.", `${path}.source`));
+    if (!isNonEmptyString(connection.target)) errors.push(issue("invalid-mesh-connection-target", "Mesh connection target must be a string.", `${path}.target`));
   });
 }
 
@@ -364,6 +565,9 @@ function validateNamedIndexSet(
     errors.push(issue(`invalid-${prefix}`, `${property} must be an array.`, `${path}.${property}`));
     return;
   }
+  if (values.length === 0) {
+    errors.push(issue(`empty-${prefix}`, `${property} must contain at least one index.`, `${path}.${property}`));
+  }
   const seen = new Set<number>();
   values.forEach((value, valueIndex) => {
     const valuePath = `${path}.${property}[${valueIndex}]`;
@@ -378,25 +582,6 @@ function validateNamedIndexSet(
       errors.push(issue(`duplicate-${prefix}-index`, "Set indices must be unique.", valuePath));
     }
     seen.add(value);
-  });
-}
-
-function validateTetNodeIndices(
-  tet: unknown[],
-  nodeCount: number,
-  path: string,
-  offset: number,
-  errors: ValidationIssue[]
-): void {
-  tet.forEach((nodeIndex, localIndex) => {
-    const nodePath = `${path}[${offset + localIndex}]`;
-    if (!Number.isInteger(nodeIndex)) {
-      errors.push(issue("node-index-not-integer", "Tet4 node indices must be integers.", nodePath));
-      return;
-    }
-    if ((nodeIndex as number) < 0 || (nodeIndex as number) >= nodeCount) {
-      errors.push(issue("node-index-out-of-range", "Tet4 node indices must reference existing nodes.", nodePath));
-    }
   });
 }
 
@@ -437,24 +622,19 @@ function validateComponent(component: unknown, path: string, errors: ValidationI
   }
 }
 
-function validateNodeSetReference(
-  nodeSet: unknown,
-  nodeSetNames: Set<string>,
-  path: string,
-  errors: ValidationIssue[]
-): void {
+function validateNodeSetReference(nodeSet: unknown, nodeSetNames: Set<string>, path: string, errors: ValidationIssue[]): void {
   if (!isNonEmptyString(nodeSet) || !nodeSetNames.has(nodeSet)) {
     errors.push(issue("missing-node-set-reference", "Reference must point to an existing node set.", path));
   }
 }
 
-function validateUniqueName(
-  name: unknown,
-  names: Set<string>,
-  prefix: string,
-  path: string,
-  errors: ValidationIssue[]
-): void {
+function validateSurfaceSetReference(surfaceSet: unknown, surfaceSetNames: Set<string>, path: string, errors: ValidationIssue[]): void {
+  if (!isNonEmptyString(surfaceSet) || !surfaceSetNames.has(surfaceSet)) {
+    errors.push(issue("missing-surface-set-reference", "Reference must point to an existing surface set.", path));
+  }
+}
+
+function validateUniqueName(name: unknown, names: Set<string>, prefix: string, path: string, errors: ValidationIssue[]): void {
   if (!isNonEmptyString(name)) {
     errors.push(issue(`invalid-${prefix}-name`, "Name must be a non-empty string.", path));
     return;
@@ -463,6 +643,38 @@ function validateUniqueName(
     errors.push(issue(`duplicate-${prefix}-name`, "Names must be unique.", path));
   }
   names.add(name);
+}
+
+function validateVector3(
+  value: unknown,
+  path: string,
+  code: string,
+  message: string,
+  errors: ValidationIssue[]
+): void {
+  if (!Array.isArray(value) || value.length !== 3 || !value.every(isFiniteNumber)) {
+    errors.push(issue(code, message, path));
+  }
+}
+
+function validateOptionalVector3(value: unknown, path: string, code: string, errors: ValidationIssue[]): void {
+  if (value !== undefined) {
+    validateVector3(value, path, code, "Vector must contain three finite numbers.", errors);
+  }
+}
+
+function validateFinite(value: unknown, path: string, code: string, errors: ValidationIssue[]): void {
+  if (!isFiniteNumber(value)) errors.push(issue(code, "Value must be finite.", path));
+}
+
+function validatePositive(value: unknown, path: string, code: string, errors: ValidationIssue[]): void {
+  if (!isFiniteNumber(value) || value <= 0) errors.push(issue(code, "Value must be positive.", path));
+}
+
+function validateOptionalNonNegative(value: unknown, path: string, code: string, errors: ValidationIssue[]): void {
+  if (value !== undefined && (!isFiniteNumber(value) || value < 0)) {
+    errors.push(issue(code, "Value must be non-negative.", path));
+  }
 }
 
 function report(errors: ValidationIssue[]): ValidationReport {
@@ -487,4 +699,8 @@ function isNonEmptyString(value: unknown): value is string {
 
 function isFiniteNumber(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value);
+}
+
+function isInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value);
 }

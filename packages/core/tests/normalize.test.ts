@@ -42,8 +42,11 @@ describe("normalizeModelJson", () => {
       elementSets: 1,
       loads: 1,
       boundaryConditions: 2,
-      steps: 1
+      steps: 1,
+      surfaceFacets: 0,
+      surfaceSets: 0
     });
+    expect(result.model?.schemaVersion).toBe("0.2.0");
   });
 
   test("computes counts for a valid two-tet model", () => {
@@ -57,7 +60,40 @@ describe("normalizeModelJson", () => {
       elementSets: 1,
       loads: 1,
       boundaryConditions: 2,
-      steps: 1
+      steps: 1,
+      surfaceFacets: 0,
+      surfaceSets: 0
     });
+  });
+
+  test("normalizes v0.2 surface facets, surface sets, and coordinate metadata", () => {
+    const model = {
+      ...createSingleTetModel(),
+      schemaVersion: "0.2.0",
+      surfaceFacets: [
+        {
+          id: 7,
+          element: 0,
+          elementFace: 0,
+          nodes: [0, 2, 1],
+          area: 0.5,
+          normal: [0, 0, -1],
+          center: [1 / 3, 1 / 3, 0],
+          sourceFaceId: "base"
+        }
+      ],
+      surfaceSets: [{ name: "baseFace", facets: [7] }],
+      coordinateSystem: { solverUnits: "m-N-s-Pa", renderCoordinateSpace: "cad" }
+    };
+
+    const result = normalizeModelJson(model);
+
+    expect(result.ok).toBe(true);
+    expect(result.model?.schemaVersion).toBe("0.2.0");
+    expect(result.model?.surfaceFacets[0].nodes).toBeInstanceOf(Uint32Array);
+    expect(result.model?.surfaceSets[0].facets).toBeInstanceOf(Uint32Array);
+    expect(result.model?.coordinateSystem.solverUnits).toBe("m-N-s-Pa");
+    expect(result.model?.counts.surfaceFacets).toBe(1);
+    expect(result.model?.counts.surfaceSets).toBe(1);
   });
 });

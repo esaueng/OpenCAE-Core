@@ -1,6 +1,7 @@
-import { validateModelJson } from "@opencae/core";
+import { connectedComponents, validateModelJson } from "@opencae/core";
 import { describe, expect, test } from "vitest";
 import {
+  bracketActualMeshFixture,
   invalidConnectivityFixture,
   singleTetStaticFixture,
   twoTetStaticFixture
@@ -25,6 +26,18 @@ describe("Phase 1 fixtures", () => {
         "duplicate-tet-node",
         "node-index-out-of-range"
       ])
+    );
+  });
+
+  test("bracket-actual-mesh is a valid connected v0.2 fixture with real surface sets", () => {
+    const report = validateModelJson(bracketActualMeshFixture);
+    const components = connectedComponents(bracketActualMeshFixture);
+
+    expect(report.ok).toBe(true);
+    expect(bracketActualMeshFixture.schemaVersion).toBe("0.2.0");
+    expect(components.componentCount).toBe(1);
+    expect(bracketActualMeshFixture.surfaceSets?.map((set) => set.name)).toEqual(
+      expect.arrayContaining(["base_mount", "upright_load", "hole_wall", "gusset_skin"])
     );
   });
 });

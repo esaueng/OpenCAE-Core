@@ -108,4 +108,157 @@ describe("solveStaticLinearTet4Cpu", () => {
     expect(result.ok).toBe(false);
     expect(result.ok ? undefined : result.error.code).toBe("conflicting-prescribed-displacement");
   });
+
+  test("solves surface force loads with sparse CG and preserves reaction balance", () => {
+    const model: OpenCAEModelJson = {
+      ...singleTetStaticFixture,
+      schemaVersion: "0.2.0",
+      surfaceFacets: [
+        {
+          id: 1,
+          element: 0,
+          elementFace: 0,
+          nodes: [1, 2, 3],
+          area: 0.8660254037844386,
+          normal: [0.5773502691896258, 0.5773502691896258, 0.5773502691896258],
+          center: [1 / 3, 1 / 3, 1 / 3],
+          sourceFaceId: "tip-face"
+        }
+      ],
+      surfaceSets: [{ name: "tipFace", facets: [1] }],
+      loads: [
+        {
+          name: "faceLoad",
+          type: "surfaceForce",
+          surfaceSet: "tipFace",
+          totalForce: [0, 0, -90]
+        }
+      ],
+      steps: [
+        {
+          name: "loadStep",
+          type: "staticLinear",
+          boundaryConditions: ["fixedSupport", "settlement", "supportY", "supportZ"],
+          loads: ["faceLoad"]
+        }
+      ]
+    };
+
+    const result = solveStaticLinearTet4Cpu(model, { solverMode: "sparse" });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.diagnostics.solverMode).toBe("sparse");
+    const reaction = sumVectorDofs(result.result.reactionForce);
+    expect(reaction[0]).toBeCloseTo(0, 8);
+    expect(reaction[1]).toBeCloseTo(0, 8);
+    expect(reaction[2]).toBeCloseTo(90, 8);
+  });
+
+  test("solves pressure loads as pressure times facet area", () => {
+    const area = 0.8660254037844386;
+    const model: OpenCAEModelJson = {
+      ...singleTetStaticFixture,
+      schemaVersion: "0.2.0",
+      surfaceFacets: [
+        {
+          id: 1,
+          element: 0,
+          elementFace: 0,
+          nodes: [1, 2, 3],
+          area,
+          normal: [0, 0, 1],
+          center: [1 / 3, 1 / 3, 1 / 3]
+        }
+      ],
+      surfaceSets: [{ name: "tipFace", facets: [1] }],
+      loads: [
+        {
+          name: "pressure",
+          type: "pressure",
+          surfaceSet: "tipFace",
+          pressure: 50,
+          direction: [0, 0, -1]
+        }
+      ],
+      steps: [
+        {
+          name: "loadStep",
+          type: "staticLinear",
+          boundaryConditions: ["fixedSupport", "settlement", "supportY", "supportZ"],
+          loads: ["pressure"]
+        }
+      ]
+    };
+
+    const result = solveStaticLinearTet4Cpu(model, { solverMode: "sparse" });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const reaction = sumVectorDofs(result.result.reactionForce);
+    expect(reaction[2]).toBeCloseTo(50 * area, 8);
+  });
+
+  test("returns structured unsupported-element-type for Tet10 instead of downgrading", () => {
+    const model = {
+      ...singleTetStaticFixture,
+      schemaVersion: "0.2.0",
+      nodes: {
+        coordinates: [
+          ...singleTetStaticFixture.nodes.coordinates,
+          0.5, 0, 0,
+          0.5, 0.5, 0,
+          0, 0.5, 0,
+          0, 0, 0.5,
+          0.5, 0, 0.5,
+          0, 0.5, 0.5
+        ]
+      },
+      elementBlocks: [
+        {
+          name: "tet10",
+          type: "Tet10",
+          material: "steel",
+          connectivity: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+        }
+      ]
+    };
+
+    const result = solveStaticLinearTet4Cpu(model);
+
+    expect(result.ok).toBe(false);
+    expect(result.ok ? undefined : result.error.code).toBe("unsupported-element-type");
+  });
+
+  test("handles a zero-load constrained model without producing nonzero displacement", () => {
+    const model: OpenCAEModelJson = {
+      ...singleTetStaticFixture,
+      loads: [],
+      steps: [
+        {
+          name: "loadStep",
+          type: "staticLinear",
+          boundaryConditions: ["fixedSupport", "settlement", "supportY", "supportZ"],
+          loads: []
+        }
+      ]
+    };
+
+    const result = solveStaticLinearTet4Cpu(model, { solverMode: "sparse" });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(Math.max(...Array.from(result.result.displacement).map(Math.abs))).toBeLessThan(1e-14);
+    expect(result.diagnostics.relativeResidual).toBe(0);
+  });
 });
+
+function sumVectorDofs(values: Float64Array): [number, number, number] {
+  const sum: [number, number, number] = [0, 0, 0];
+  for (let index = 0; index < values.length; index += 3) {
+    sum[0] += values[index];
+    sum[1] += values[index + 1];
+    sum[2] += values[index + 2];
+  }
+  return sum;
+}

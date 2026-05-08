@@ -1,8 +1,11 @@
-import type {
-  ModelNormalizationResult,
-  NormalizedOpenCAEModel,
-  OpenCAEModelJson
+import {
+  OPENCAE_MODEL_SCHEMA_VERSION,
+  type CoordinateSystemJson,
+  type ModelNormalizationResult,
+  type NormalizedOpenCAEModel,
+  type OpenCAEModelJson
 } from "./model-json";
+import { nodesPerElement } from "./topology";
 import { validateModelJson } from "./validation";
 
 export function normalizeModelJson(input: unknown): ModelNormalizationResult {
@@ -18,10 +21,14 @@ export function normalizeModelJson(input: unknown): ModelNormalizationResult {
   const materialIndexByName = new Map(
     model.materials.map((material, materialIndex) => [material.name, materialIndex])
   );
+  const coordinateSystem: CoordinateSystemJson = model.coordinateSystem ?? {
+    solverUnits: "m-N-s-Pa",
+    renderCoordinateSpace: "solver"
+  };
 
   const normalized: NormalizedOpenCAEModel = {
     schema: model.schema,
-    schemaVersion: model.schemaVersion,
+    schemaVersion: OPENCAE_MODEL_SCHEMA_VERSION,
     nodes: {
       coordinates: new Float64Array(model.nodes.coordinates)
     },
@@ -41,18 +48,31 @@ export function normalizeModelJson(input: unknown): ModelNormalizationResult {
       name: elementSet.name,
       elements: new Uint32Array(elementSet.elements)
     })),
+    surfaceFacets: (model.surfaceFacets ?? []).map((facet) => ({
+      ...facet,
+      nodes: new Uint32Array(facet.nodes)
+    })),
+    surfaceSets: (model.surfaceSets ?? []).map((surfaceSet) => ({
+      name: surfaceSet.name,
+      facets: new Uint32Array(surfaceSet.facets)
+    })),
     boundaryConditions: model.boundaryConditions.map((boundaryCondition) => ({ ...boundaryCondition })),
     loads: model.loads.map((load) => ({ ...load })),
     steps: model.steps.map((step) => ({ ...step })),
+    coordinateSystem,
+    meshProvenance: model.meshProvenance ? { ...model.meshProvenance } : undefined,
+    meshConnections: (model.meshConnections ?? []).map((connection) => ({ ...connection })),
     counts: {
       nodes: model.nodes.coordinates.length / 3,
       elements: model.elementBlocks.reduce(
-        (elementCount, block) => elementCount + block.connectivity.length / 4,
+        (elementCount, block) => elementCount + block.connectivity.length / nodesPerElement(block.type),
         0
       ),
       materials: model.materials.length,
       nodeSets: model.nodeSets.length,
       elementSets: model.elementSets.length,
+      surfaceFacets: model.surfaceFacets?.length ?? 0,
+      surfaceSets: model.surfaceSets?.length ?? 0,
       loads: model.loads.length,
       boundaryConditions: model.boundaryConditions.length,
       steps: model.steps.length

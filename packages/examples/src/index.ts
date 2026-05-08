@@ -1,5 +1,9 @@
 export const PLACEHOLDER_MODEL_FIXTURE = "fixtures/placeholder-model.json";
-import type { OpenCAEModelJson } from "@opencae/core";
+import {
+  deriveFixedSupportNodeSetFromSurface,
+  volumeMeshToModelJson,
+  type OpenCAEModelJson
+} from "@opencae/core";
 
 export const singleTetStaticFixture = {
   schema: "opencae.model",
@@ -186,6 +190,104 @@ export const invalidConnectivityFixture = {
   ],
   elementSets: []
 } satisfies OpenCAEModelJson;
+
+const bracketMeshBase = volumeMeshToModelJson({
+  nodes: {
+    coordinates: [
+      0, 0, 0,
+      2, 0, 0,
+      0, 1, 0,
+      0, 0, 0.2,
+      2, 1, 0.2,
+      0, 0.2, 1.2,
+      0, 1, 1.2,
+      0.2, 0, 1.2,
+      0.2, 1, 1.2,
+      1, 0.5, 0.7
+    ]
+  },
+  materials: [
+    {
+      name: "steel",
+      type: "isotropicLinearElastic",
+      youngModulus: 210000000000,
+      poissonRatio: 0.3,
+      yieldStrength: 250000000,
+      density: 7850
+    }
+  ],
+  elementBlocks: [
+    {
+      name: "fused_bracket",
+      type: "Tet4",
+      material: "steel",
+      connectivity: [
+        0, 1, 2, 3,
+        1, 2, 3, 4,
+        0, 2, 3, 7,
+        2, 3, 7, 8,
+        2, 6, 7, 8,
+        1, 4, 3, 9
+      ]
+    }
+  ],
+  sourceFaces: [
+    { sourceSelectionRef: "base_mount", sourceFaceId: "base_mount", element: 0, elementFace: 3 },
+    { sourceSelectionRef: "upright_load", sourceFaceId: "upright_load", element: 4, elementFace: 0 },
+    { sourceSelectionRef: "hole_wall", sourceFaceId: "hole_wall", element: 2, elementFace: 2 },
+    { sourceSelectionRef: "gusset_skin", sourceFaceId: "gusset_skin", element: 5, elementFace: 0 }
+  ],
+  surfaceSets: [
+    { name: "base_mount", sourceSelectionRef: "base_mount" },
+    { name: "upright_load", sourceSelectionRef: "upright_load" },
+    { name: "hole_wall", sourceSelectionRef: "hole_wall" },
+    { name: "gusset_skin", sourceSelectionRef: "gusset_skin" }
+  ]
+});
+
+export const bracketActualMeshFixture: OpenCAEModelJson = {
+  ...bracketMeshBase,
+  nodeSets: [
+    deriveFixedSupportNodeSetFromSurface("fixedBaseNodes", "base_mount", bracketMeshBase),
+    deriveFixedSupportNodeSetFromSurface("loadFaceNodes", "upright_load", bracketMeshBase)
+  ],
+  boundaryConditions: [
+    {
+      name: "fixedBase",
+      type: "fixed",
+      nodeSet: "fixedBaseNodes",
+      components: ["x", "y", "z"]
+    }
+  ],
+  loads: [
+    {
+      name: "uprightPush",
+      type: "surfaceForce",
+      surfaceSet: "upright_load",
+      totalForce: [0, 0, -250]
+    }
+  ],
+  steps: [
+    {
+      name: "staticBracket",
+      type: "staticLinear",
+      boundaryConditions: ["fixedBase"],
+      loads: ["uprightPush"]
+    },
+    {
+      name: "dynamicBracket",
+      type: "dynamicLinear",
+      boundaryConditions: ["fixedBase"],
+      loads: ["uprightPush"],
+      startTime: 0,
+      endTime: 0.05,
+      timeStep: 0.005,
+      outputInterval: 0.01,
+      loadProfile: "ramp",
+      dampingRatio: 0.02
+    }
+  ]
+};
 
 export const phase1FixturePaths = {
   singleTetStatic: "fixtures/single-tet-static.json",

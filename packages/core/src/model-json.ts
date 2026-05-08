@@ -1,19 +1,31 @@
 export const OPENCAE_MODEL_SCHEMA = "opencae.model";
-export const OPENCAE_MODEL_SCHEMA_VERSION = "0.1.0";
+export const OPENCAE_MODEL_SCHEMA_VERSION = "0.2.0";
+export const OPENCAE_LEGACY_MODEL_SCHEMA_VERSION = "0.1.0";
+
+export type OpenCAEModelSchemaVersion =
+  | typeof OPENCAE_MODEL_SCHEMA_VERSION
+  | typeof OPENCAE_LEGACY_MODEL_SCHEMA_VERSION;
+
+export type ElementType = "Tet4" | "Tet10";
 
 export type OpenCAEModelJson = {
   schema: typeof OPENCAE_MODEL_SCHEMA;
-  schemaVersion: typeof OPENCAE_MODEL_SCHEMA_VERSION;
+  schemaVersion: OpenCAEModelSchemaVersion;
   nodes: {
     coordinates: number[];
   };
   materials: IsotropicLinearElasticMaterialJson[];
-  elementBlocks: Tet4ElementBlockJson[];
+  elementBlocks: ElementBlockJson[];
   nodeSets: NodeSetJson[];
   elementSets: ElementSetJson[];
   boundaryConditions: BoundaryConditionJson[];
   loads: LoadJson[];
-  steps: StaticLinearStepJson[];
+  steps: StepJson[];
+  surfaceFacets?: SurfaceFacetJson[];
+  surfaceSets?: SurfaceSetJson[];
+  coordinateSystem?: CoordinateSystemJson;
+  meshProvenance?: MeshProvenanceJson;
+  meshConnections?: MeshConnectionJson[];
 };
 
 export type IsotropicLinearElasticMaterialJson = {
@@ -21,13 +33,23 @@ export type IsotropicLinearElasticMaterialJson = {
   type: "isotropicLinearElastic";
   youngModulus: number;
   poissonRatio: number;
+  yieldStrength?: number;
+  density?: number;
 };
 
-export type Tet4ElementBlockJson = {
+export type ElementBlockJson = {
   name: string;
-  type: "Tet4";
+  type: ElementType;
   material: string;
   connectivity: number[];
+};
+
+export type Tet4ElementBlockJson = ElementBlockJson & {
+  type: "Tet4";
+};
+
+export type Tet10ElementBlockJson = ElementBlockJson & {
+  type: "Tet10";
 };
 
 export type NodeSetJson = {
@@ -38,6 +60,41 @@ export type NodeSetJson = {
 export type ElementSetJson = {
   name: string;
   elements: number[];
+};
+
+export type SurfaceFacetJson = {
+  id: number;
+  element: number;
+  elementFace: number;
+  nodes: number[];
+  area?: number;
+  normal?: [number, number, number];
+  center?: [number, number, number];
+  sourceFaceId?: string;
+  sourceSelectionRef?: string;
+};
+
+export type SurfaceSetJson = {
+  name: string;
+  facets: number[];
+};
+
+export type CoordinateSystemJson = {
+  solverUnits: "m-N-s-Pa" | "mm-N-s-MPa";
+  renderCoordinateSpace?: string;
+};
+
+export type MeshProvenanceJson = {
+  kind: "opencae_core_fea" | "local_estimate";
+  solver: "opencae-core-sparse-tet" | "opencae-core-preview-sdof" | string;
+  resultSource: "computed" | "computed_preview";
+  meshSource?: "actual_volume_mesh" | "structured_block" | "display_bounds_proxy" | string;
+};
+
+export type MeshConnectionJson = {
+  type: "tie" | "contact" | "fuse";
+  source: string;
+  target: string;
 };
 
 export type BoundaryConditionJson = FixedBoundaryConditionJson | PrescribedDisplacementBoundaryConditionJson;
@@ -59,7 +116,7 @@ export type PrescribedDisplacementBoundaryConditionJson = {
 
 export type DisplacementComponent = "x" | "y" | "z";
 
-export type LoadJson = NodalForceLoadJson;
+export type LoadJson = NodalForceLoadJson | SurfaceForceLoadJson | PressureLoadJson;
 
 export type NodalForceLoadJson = {
   name: string;
@@ -68,11 +125,66 @@ export type NodalForceLoadJson = {
   vector: [number, number, number];
 };
 
+export type SurfaceForceLoadJson = {
+  name: string;
+  type: "surfaceForce";
+  surfaceSet: string;
+  totalForce: [number, number, number];
+};
+
+export type PressureLoadJson = {
+  name: string;
+  type: "pressure";
+  surfaceSet: string;
+  pressure: number;
+  direction?: [number, number, number];
+};
+
+export type StepJson = StaticLinearStepJson | DynamicStepJson;
+
 export type StaticLinearStepJson = {
   name: string;
   type: "staticLinear";
   boundaryConditions: string[];
   loads: string[];
+};
+
+export type DynamicLoadProfileJson = "step" | "ramp" | "quasi_static" | "sinusoidal";
+
+export type DynamicStepJson = {
+  name: string;
+  type: "dynamicLinear";
+  boundaryConditions: string[];
+  loads: string[];
+  startTime: number;
+  endTime: number;
+  timeStep: number;
+  outputInterval: number;
+  loadProfile: DynamicLoadProfileJson;
+  dampingRatio?: number;
+  rayleighAlpha?: number;
+  rayleighBeta?: number;
+};
+
+export type ResultSampleLocation = "node" | "element" | "integration_point";
+
+export type ResultFieldJson = {
+  name: string;
+  values: number[] | Float64Array;
+  samples: number[];
+  frameIndex: number;
+  timeSeconds: number;
+  meshRef: string;
+  coordinateSpace: string;
+  surfaceMeshRef?: string;
+  sampleLocation: ResultSampleLocation;
+};
+
+export type SolverSurfaceMeshJson = {
+  surfaceNodes: number[];
+  surfaceTriangles: number[];
+  coordinateSpace: string;
+  meshRef: string;
 };
 
 export type ValidationIssue = {
@@ -94,30 +206,41 @@ export type NormalizedOpenCAEModel = {
     coordinates: Float64Array;
   };
   materials: IsotropicLinearElasticMaterialJson[];
-  elementBlocks: NormalizedTet4ElementBlock[];
+  elementBlocks: NormalizedElementBlock[];
   nodeSets: NormalizedNodeSet[];
   elementSets: NormalizedElementSet[];
+  surfaceFacets: NormalizedSurfaceFacet[];
+  surfaceSets: NormalizedSurfaceSet[];
   boundaryConditions: BoundaryConditionJson[];
   loads: LoadJson[];
-  steps: StaticLinearStepJson[];
+  steps: StepJson[];
+  coordinateSystem: CoordinateSystemJson;
+  meshProvenance?: MeshProvenanceJson;
+  meshConnections: MeshConnectionJson[];
   counts: {
     nodes: number;
     elements: number;
     materials: number;
     nodeSets: number;
     elementSets: number;
+    surfaceFacets: number;
+    surfaceSets: number;
     loads: number;
     boundaryConditions: number;
     steps: number;
   };
 };
 
-export type NormalizedTet4ElementBlock = {
+export type NormalizedElementBlock = {
   name: string;
-  type: "Tet4";
+  type: ElementType;
   material: string;
   materialIndex: number;
   connectivity: Uint32Array;
+};
+
+export type NormalizedTet4ElementBlock = NormalizedElementBlock & {
+  type: "Tet4";
 };
 
 export type NormalizedNodeSet = {
@@ -128,6 +251,15 @@ export type NormalizedNodeSet = {
 export type NormalizedElementSet = {
   name: string;
   elements: Uint32Array;
+};
+
+export type NormalizedSurfaceFacet = Omit<SurfaceFacetJson, "nodes"> & {
+  nodes: Uint32Array;
+};
+
+export type NormalizedSurfaceSet = {
+  name: string;
+  facets: Uint32Array;
 };
 
 export type ModelNormalizationResult =

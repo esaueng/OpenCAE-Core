@@ -6,9 +6,12 @@ export type CpuSolverOptions = {
   stepIndex?: number;
   maxDofs?: number;
   singularTolerance?: number;
+  solverMode?: "auto" | "dense" | "sparse";
+  tolerance?: number;
+  maxIterations?: number;
 };
 
-export type DynamicLoadProfile = "step" | "ramp" | "quasiStatic" | "sinusoidal";
+export type DynamicLoadProfile = "step" | "ramp" | "quasiStatic" | "quasi_static" | "sinusoidal";
 
 export type DynamicTet4CpuOptions = CpuSolverOptions & {
   startTime?: number;
@@ -33,6 +36,9 @@ export type CpuSolverDiagnostics = {
   relativeResidual: number;
   maxDisplacement: number;
   maxVonMisesStress: number;
+  solverMode?: "dense" | "sparse";
+  iterations?: number;
+  converged?: boolean;
 };
 
 export type StaticLinearTet4CpuResult = {
@@ -41,6 +47,12 @@ export type StaticLinearTet4CpuResult = {
   strain: Float64Array;
   stress: Float64Array;
   vonMises: Float64Array;
+  provenance?: {
+    kind: "opencae_core_fea" | "local_estimate";
+    solver: "opencae-core-sparse-tet" | "opencae-core-preview-sdof";
+    resultSource: "computed" | "computed_preview";
+    meshSource: "actual_volume_mesh" | "structured_block";
+  };
 };
 
 export type StaticLinearTet4CpuSolveResult =
@@ -56,15 +68,22 @@ export type StaticLinearTet4CpuSolveResult =
     };
 
 export type DynamicTet4CpuFrame = {
-  index: number;
-  time: number;
+  frameIndex: number;
+  timeSeconds: number;
   loadScale: number;
-  displacement: Float64Array;
-  velocity: Float64Array;
-  acceleration: Float64Array;
-  strain: Float64Array;
-  stress: Float64Array;
-  vonMises: Float64Array;
+  displacement: DynamicResultField;
+  velocity: DynamicResultField;
+  acceleration: DynamicResultField;
+  stress: DynamicResultField;
+  vonMises: DynamicResultField;
+  safety_factor: DynamicResultField;
+};
+
+export type DynamicResultField = {
+  values: Float64Array;
+  samples: number[];
+  frameIndex: number;
+  timeSeconds: number;
 };
 
 export type DynamicTet4CpuResult = {
@@ -85,6 +104,7 @@ export type DynamicTet4CpuDiagnostics = CpuSolverDiagnostics & {
   peakDisplacement: number;
   peakVelocity: number;
   peakAcceleration: number;
+  solver: "opencae-core-mdof-newmark";
 };
 
 export type DynamicTet4CpuSolveResult =
