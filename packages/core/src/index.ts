@@ -70,5 +70,18 @@ export {
   isSimpleBlockLikeDisplayModel,
   volumeMeshToModelJson
 } from "./mesh-adapter";
+export type { ElementFace, MeshConnectedComponents, MeshQualitySummary, MeshUtilityModel } from "./mesh";
+export * as mesh from "./mesh";
+export {
+  elementFaces,
+  elementNodeCount,
+  extractBoundarySurfaceFacets,
+  meshQualitySummary,
+  nodeSetFromSurfaceSet,
+  orphanNodes,
+  surfaceArea,
+  surfaceNormalAverage,
+  tet4Volume
+} from "./mesh";
 export { normalizeModelJson } from "./normalize";
 export { validateModelJson } from "./validation";
