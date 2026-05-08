@@ -20,8 +20,11 @@ export type DynamicTet4CpuOptions = CpuSolverOptions & {
   timeStep?: number;
   outputInterval?: number;
   dampingRatio?: number;
+  rayleighAlpha?: number;
+  rayleighBeta?: number;
   loadProfile?: DynamicLoadProfile;
   massDensity?: number;
+  maxFrames?: number;
 };
 
 export type CpuSolverError = {
@@ -75,9 +78,11 @@ export type DynamicTet4CpuFrame = {
   displacement: DynamicResultField;
   velocity: DynamicResultField;
   acceleration: DynamicResultField;
+  strain: DynamicResultField;
   stress: DynamicResultField;
   vonMises: DynamicResultField;
   safety_factor: DynamicResultField;
+  reactionForce?: Float64Array;
 };
 
 export type DynamicResultField = {
@@ -103,9 +108,19 @@ export type DynamicTet4CpuDiagnostics = CpuSolverDiagnostics & {
   equivalentMass: number;
   equivalentStiffness: number;
   peakDisplacement: number;
+  peakStress: number;
   peakVelocity: number;
   peakAcceleration: number;
-  solver: "opencae-core-mdof-newmark";
+  minSafetyFactor?: number;
+  convergence: {
+    frameIndex: number;
+    timeSeconds: number;
+    iterations: number;
+    residualNorm: number;
+    relativeResidual: number;
+  }[];
+  totalMass: number;
+  solver: "opencae-core-mdof-newmark" | "opencae-core-preview-sdof";
 };
 
 export type DynamicTet4CpuSolveResult =

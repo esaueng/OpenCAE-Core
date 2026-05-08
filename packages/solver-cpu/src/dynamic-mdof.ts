@@ -25,19 +25,36 @@ const DEFAULT_END_TIME_SECONDS = 0.1;
 const DEFAULT_TIME_STEP_SECONDS = 0.005;
 const DEFAULT_OUTPUT_INTERVAL_SECONDS = 0.005;
 const DEFAULT_DAMPING_RATIO = 0.02;
-const DEFAULT_MASS_DENSITY_KG_PER_M3 = 2700;
+const DEFAULT_MAX_FRAMES = 10000;
 
-type DynamicSettings = Required<Pick<
-  DynamicTet4CpuOptions,
-  "startTime" | "endTime" | "timeStep" | "outputInterval" | "dampingRatio" | "loadProfile" | "massDensity"
->>;
+type DynamicSettings = {
+  startTime: number;
+  endTime: number;
+  timeStep: number;
+  outputInterval: number;
+  dampingRatio: number;
+  rayleighAlpha?: number;
+  rayleighBeta?: number;
+  loadProfile: DynamicLoadProfile;
+  maxFrames: number;
+};
 
 type ReducedSystem = {
   stiffness: CsrMatrix;
+  fullStiffness: CsrMatrix;
+  fullLoad: Float64Array;
   load: Float64Array;
   mass: Float64Array;
   free: Int32Array;
+  constraints: Map<number, number>;
 };
+
+export function solveDynamicLinearTetMDOF(
+  input: CpuSolverInput,
+  options: DynamicTet4CpuOptions = {}
+): DynamicTet4CpuSolveResult {
+  return solveDynamicMdofTet4Cpu(input, options);
+}
 
 export function solveDynamicMdofTet4Cpu(
   input: CpuSolverInput,
@@ -49,6 +66,10 @@ export function solveDynamicMdofTet4Cpu(
   const settings = dynamicSettings(model, options);
   if (settings.endTime <= settings.startTime) {
     return failure("invalid-time-range", "Dynamic solve endTime must be greater than startTime.");
+  }
+  const expectedFrameCount = estimateFrameCount(settings);
+  if (expectedFrameCount > settings.maxFrames) {
+    return failure("too-many-frames", `Dynamic solve would produce ${expectedFrameCount} frames, exceeding maxFrames ${settings.maxFrames}.`);
   }
 
   const step = model.steps[options.stepIndex ?? 0];
@@ -63,20 +84,26 @@ export function solveDynamicMdofTet4Cpu(
   const free = enumerateFreeDofs(model.counts.nodes * 3, constraints.values);
   const fullLoad = assembleNodalForces(model, step.loads);
   const reduced = reduceCsrSystem(stiffness.stiffness, fullLoad, free, constraints.values);
-  const lumpedMass = assembleLumpedMass(model, settings.massDensity);
+  const lumpedMassResult = assembleLumpedMass(model);
+  if (!lumpedMassResult.ok) return { ok: false, error: lumpedMassResult.error };
+  const lumpedMass = lumpedMassResult.dofMass;
   const reducedMass = new Float64Array(free.length);
   for (let i = 0; i < free.length; i += 1) reducedMass[i] = Math.max(lumpedMass[free[i]], 1e-12);
 
   const system: ReducedSystem = {
     stiffness: reduced.matrix,
+    fullStiffness: stiffness.stiffness,
+    fullLoad,
     load: reduced.rhs,
     mass: reducedMass,
-    free
+    free,
+    constraints: constraints.values
   };
-  const rayleighAlpha = settings.dampingRatio > 0 ? settings.dampingRatio * 10 : 0;
-  const rayleighBeta = settings.dampingRatio > 0 ? settings.dampingRatio * 1e-4 : 0;
+  const rayleighAlpha = settings.rayleighAlpha ?? (settings.dampingRatio > 0 ? settings.dampingRatio * 10 : 0);
+  const rayleighBeta = settings.rayleighBeta ?? (settings.dampingRatio > 0 ? settings.dampingRatio * 1e-4 : 0);
 
   const frames: DynamicTet4CpuFrame[] = [];
+  const convergence: DynamicTet4CpuDiagnostics["convergence"] = [];
   const u = new Float64Array(free.length);
   const v = new Float64Array(free.length);
   let a = initialAcceleration(system, settings, rayleighAlpha, rayleighBeta);
@@ -84,7 +111,10 @@ export function solveDynamicMdofTet4Cpu(
   let frameIndex = 0;
   let nextOutputTime = settings.startTime + settings.outputInterval;
   const pushFrame = (loadScale: number) => {
-    frames.push(createFrame(model, free, u, v, a, frameIndex, round(time, 9), loadScale));
+    frames.push(createFrame(model, system, free, u, v, a, frameIndex, round(time, 9), loadScale));
+    if (convergence.length < frameIndex + 1) {
+      convergence.push({ frameIndex, timeSeconds: round(time, 9), iterations: 0, residualNorm: 0, relativeResidual: 0 });
+    }
     frameIndex += 1;
   };
   pushFrame(loadScaleAt(time, settings));
@@ -100,6 +130,13 @@ export function solveDynamicMdofTet4Cpu(
     a = next.a;
     time = nextTime;
     if (time >= nextOutputTime - 1e-12 || time >= settings.endTime - 1e-12) {
+      convergence.push({
+        frameIndex,
+        timeSeconds: round(time, 9),
+        iterations: next.iterations,
+        residualNorm: next.residualNorm,
+        relativeResidual: next.relativeResidual
+      });
       pushFrame(loadScaleAt(time, settings));
       while (nextOutputTime <= time + 1e-12) nextOutputTime += settings.outputInterval;
     }
@@ -108,7 +145,10 @@ export function solveDynamicMdofTet4Cpu(
   const peakDisplacement = Math.max(...frames.map((frame) => maxAbs(frame.displacement.values)), 0);
   const peakVelocity = Math.max(...frames.map((frame) => maxAbs(frame.velocity.values)), 0);
   const peakAcceleration = Math.max(...frames.map((frame) => maxAbs(frame.acceleration.values)), 0);
-  const equivalentMass = sum(lumpedMass);
+  const peakStress = Math.max(...frames.map((frame) => maxAbs(frame.stress.values)), 0);
+  const safetyFactors = frames.flatMap((frame) => Array.from(frame.safety_factor.values).filter((value) => value > 0 && Number.isFinite(value)));
+  const minSafetyFactor = safetyFactors.length > 0 ? Math.min(...safetyFactors) : undefined;
+  const equivalentMass = lumpedMassResult.totalMass;
   const equivalentStiffness = estimateEquivalentStiffness(system);
 
   const diagnostics: DynamicTet4CpuDiagnostics = {
@@ -130,8 +170,12 @@ export function solveDynamicMdofTet4Cpu(
     equivalentMass,
     equivalentStiffness,
     peakDisplacement,
+    peakStress,
     peakVelocity,
     peakAcceleration,
+    minSafetyFactor,
+    convergence,
+    totalMass: lumpedMassResult.totalMass,
     solver: "opencae-core-mdof-newmark"
   };
 
@@ -140,7 +184,7 @@ export function solveDynamicMdofTet4Cpu(
     result: {
       staticResult: {
         displacement: frames.at(-1)?.displacement.values ?? new Float64Array(model.counts.nodes * 3),
-        reactionForce: new Float64Array(model.counts.nodes * 3),
+        reactionForce: frames.at(-1)?.reactionForce ?? new Float64Array(model.counts.nodes * 3),
         strain: new Float64Array(model.counts.elements * 6),
         stress: frames.at(-1)?.stress.values ?? new Float64Array(model.counts.elements * 6),
         vonMises: frames.at(-1)?.vonMises.values ?? new Float64Array(model.counts.elements)
@@ -162,8 +206,10 @@ function dynamicSettings(model: NormalizedOpenCAEModel, options: DynamicTet4CpuO
     timeStep,
     outputInterval: Math.max(finiteOr(options.outputInterval, dynamicStep?.outputInterval ?? DEFAULT_OUTPUT_INTERVAL_SECONDS), timeStep),
     dampingRatio: Math.max(finiteOr(options.dampingRatio, dynamicStep?.dampingRatio ?? DEFAULT_DAMPING_RATIO), 0),
+    rayleighAlpha: options.rayleighAlpha ?? dynamicStep?.rayleighAlpha,
+    rayleighBeta: options.rayleighBeta ?? dynamicStep?.rayleighBeta,
     loadProfile: isDynamicLoadProfile(profile) ? profile : "ramp",
-    massDensity: Math.max(finiteOr(options.massDensity, DEFAULT_MASS_DENSITY_KG_PER_M3), 1e-9)
+    maxFrames: Math.max(Math.floor(finiteOr(options.maxFrames, DEFAULT_MAX_FRAMES)), 1)
   };
 }
 
@@ -177,7 +223,15 @@ function newmarkStep(
   rayleighAlpha: number,
   rayleighBeta: number,
   options: DynamicTet4CpuOptions
-): { ok: true; u: Float64Array; v: Float64Array; a: Float64Array } | { ok: false; error: CpuSolverError } {
+): {
+  ok: true;
+  u: Float64Array;
+  v: Float64Array;
+  a: Float64Array;
+  iterations: number;
+  residualNorm: number;
+  relativeResidual: number;
+} | { ok: false; error: CpuSolverError } {
   const beta = 0.25;
   const gamma = 0.5;
   const a0 = 1 / (beta * dt * dt);
@@ -213,7 +267,15 @@ function newmarkStep(
     nextA[i] = a0 * (nextU[i] - u[i]) - a2 * v[i] - a3 * a[i];
     nextV[i] = v[i] + dt * ((1 - gamma) * a[i] + gamma * nextA[i]);
   }
-  return { ok: true, u: nextU, v: nextV, a: nextA };
+  return {
+    ok: true,
+    u: nextU,
+    v: nextV,
+    a: nextA,
+    iterations: solve.iterations,
+    residualNorm: solve.residualNorm,
+    relativeResidual: solve.relativeResidual
+  };
 }
 
 function initialAcceleration(
@@ -254,6 +316,7 @@ function dampingProduct(system: ReducedSystem, vector: Float64Array, alpha: numb
 
 function createFrame(
   model: NormalizedOpenCAEModel,
+  system: ReducedSystem,
   free: Int32Array,
   reducedU: Float64Array,
   reducedV: Float64Array,
@@ -262,13 +325,15 @@ function createFrame(
   timeSeconds: number,
   loadScale: number
 ): DynamicTet4CpuFrame {
-  const displacement = expandFreeVector(model.counts.nodes * 3, free, reducedU);
+  const displacement = expandFreeVector(model.counts.nodes * 3, free, reducedU, system.constraints);
   const velocity = expandFreeVector(model.counts.nodes * 3, free, reducedV);
   const acceleration = expandFreeVector(model.counts.nodes * 3, free, reducedA);
   const recovery = recoverElementResults(model, displacement);
+  const strain = recovery.ok ? recovery.strain : new Float64Array(model.counts.elements * 6);
   const stress = recovery.ok ? recovery.stress : new Float64Array(model.counts.elements * 6);
   const vonMises = recovery.ok ? recovery.vonMises : new Float64Array(model.counts.elements);
   const safetyFactor = computeSafetyFactor(model, vonMises);
+  const reactionForce = computeReactionForce(system, displacement, loadScale);
   return {
     frameIndex,
     timeSeconds,
@@ -276,22 +341,38 @@ function createFrame(
     displacement: field(displacement, frameIndex, timeSeconds),
     velocity: field(velocity, frameIndex, timeSeconds),
     acceleration: field(acceleration, frameIndex, timeSeconds),
+    strain: field(strain, frameIndex, timeSeconds),
     stress: field(stress, frameIndex, timeSeconds),
     vonMises: field(vonMises, frameIndex, timeSeconds),
-    safety_factor: field(safetyFactor, frameIndex, timeSeconds)
+    safety_factor: field(safetyFactor, frameIndex, timeSeconds),
+    reactionForce
   };
 }
 
-function assembleLumpedMass(model: NormalizedOpenCAEModel, fallbackDensity: number): Float64Array {
+function assembleLumpedMass(model: NormalizedOpenCAEModel):
+  | { ok: true; dofMass: Float64Array; totalMass: number }
+  | { ok: false; error: CpuSolverError } {
   const nodalMass = new Float64Array(model.counts.nodes);
+  let totalMass = 0;
   for (const block of model.elementBlocks) {
     if (block.type !== "Tet4") continue;
     const material = model.materials[block.materialIndex];
-    const density = material.density ?? fallbackDensity;
+    if (!material?.density || !Number.isFinite(material.density)) {
+      return {
+        ok: false,
+        error: {
+          code: "missing-material-density",
+          message: "Dynamic solve requires material density."
+        }
+      };
+    }
+    const density = material.density;
     for (let offset = 0; offset < block.connectivity.length; offset += 4) {
       const geometry = computeTet4Geometry(tetCoordinates(model.nodes.coordinates, block.connectivity, offset));
       if (!geometry.ok) continue;
-      const nodeMass = (geometry.volume * density) / 4;
+      const elementMass = geometry.volume * density;
+      const nodeMass = elementMass / 4;
+      totalMass += elementMass;
       for (let localNode = 0; localNode < 4; localNode += 1) {
         nodalMass[block.connectivity[offset + localNode]] += nodeMass;
       }
@@ -303,7 +384,7 @@ function assembleLumpedMass(model: NormalizedOpenCAEModel, fallbackDensity: numb
     dofMass[node * 3 + 1] = nodalMass[node];
     dofMass[node * 3 + 2] = nodalMass[node];
   }
-  return dofMass;
+  return { ok: true, dofMass, totalMass };
 }
 
 function computeSafetyFactor(model: NormalizedOpenCAEModel, vonMises: Float64Array): Float64Array {
@@ -318,6 +399,15 @@ function computeSafetyFactor(model: NormalizedOpenCAEModel, vonMises: Float64Arr
     }
   }
   return values;
+}
+
+function computeReactionForce(system: ReducedSystem, displacement: Float64Array, loadScale: number): Float64Array {
+  const internalForce = csrMatVec(system.fullStiffness, displacement);
+  const reactionForce = new Float64Array(internalForce.length);
+  for (let i = 0; i < reactionForce.length; i += 1) {
+    reactionForce[i] = internalForce[i] - loadScale * system.fullLoad[i];
+  }
+  return reactionForce;
 }
 
 function field(values: Float64Array, frameIndex: number, timeSeconds: number): DynamicResultField {
@@ -336,8 +426,14 @@ function sampleIndices(length: number): number[] {
   return [...result].sort((a, b) => a - b);
 }
 
-function expandFreeVector(dofs: number, free: Int32Array, reduced: Float64Array): Float64Array {
+function expandFreeVector(
+  dofs: number,
+  free: Int32Array,
+  reduced: Float64Array,
+  constraints?: Map<number, number>
+): Float64Array {
   const full = new Float64Array(dofs);
+  for (const [dof, value] of constraints ?? []) full[dof] = value;
   for (let i = 0; i < free.length; i += 1) full[free[i]] = reduced[i];
   return full;
 }
@@ -347,6 +443,11 @@ function estimateEquivalentStiffness(system: ReducedSystem): number {
   const numerator = dot(system.load, ku);
   const denominator = Math.max(dot(system.load, system.load), 1e-30);
   return Math.max(numerator / denominator, 0);
+}
+
+function estimateFrameCount(settings: DynamicSettings): number {
+  const duration = settings.endTime - settings.startTime;
+  return Math.floor(duration / settings.outputInterval) + 2;
 }
 
 function tetCoordinates(coordinates: Float64Array, connectivity: Uint32Array, offset: number): Float64Array {
@@ -383,12 +484,6 @@ function clamp(value: number, min: number, max: number): number {
 function round(value: number, decimals: number): number {
   const scale = 10 ** decimals;
   return Math.round(value * scale) / scale;
-}
-
-function sum(values: Float64Array): number {
-  let total = 0;
-  for (const value of values) total += value;
-  return total;
 }
 
 function dot(a: Float64Array, b: Float64Array): number {
