@@ -4,6 +4,12 @@ export type {
   CpuSolverInput,
   CpuSolverOptions,
   DenseLinearSolveResult,
+  DynamicLoadProfile,
+  DynamicTet4CpuDiagnostics,
+  DynamicTet4CpuFrame,
+  DynamicTet4CpuOptions,
+  DynamicTet4CpuResult,
+  DynamicTet4CpuSolveResult,
   StaticLinearTet4CpuResult,
   StaticLinearTet4CpuSolveResult,
   Tet4ElementStiffnessResult,
@@ -17,4 +23,5 @@ export {
   computeVonMisesStress
 } from "./element";
 export { solveDenseLinearSystem } from "./linear-solve";
+export { solveDynamicTet4Cpu } from "./dynamic";
 export { solveStaticLinearTet4Cpu } from "./solver";

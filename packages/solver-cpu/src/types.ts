@@ -8,6 +8,18 @@ export type CpuSolverOptions = {
   singularTolerance?: number;
 };
 
+export type DynamicLoadProfile = "step" | "ramp" | "quasiStatic" | "sinusoidal";
+
+export type DynamicTet4CpuOptions = CpuSolverOptions & {
+  startTime?: number;
+  endTime?: number;
+  timeStep?: number;
+  outputInterval?: number;
+  dampingRatio?: number;
+  loadProfile?: DynamicLoadProfile;
+  massDensity?: number;
+};
+
 export type CpuSolverError = {
   code: string;
   message: string;
@@ -41,6 +53,50 @@ export type StaticLinearTet4CpuSolveResult =
       ok: false;
       error: CpuSolverError;
       diagnostics?: Partial<CpuSolverDiagnostics>;
+    };
+
+export type DynamicTet4CpuFrame = {
+  index: number;
+  time: number;
+  loadScale: number;
+  displacement: Float64Array;
+  velocity: Float64Array;
+  acceleration: Float64Array;
+  strain: Float64Array;
+  stress: Float64Array;
+  vonMises: Float64Array;
+};
+
+export type DynamicTet4CpuResult = {
+  staticResult: StaticLinearTet4CpuResult;
+  frames: DynamicTet4CpuFrame[];
+};
+
+export type DynamicTet4CpuDiagnostics = CpuSolverDiagnostics & {
+  frameCount: number;
+  startTime: number;
+  endTime: number;
+  timeStep: number;
+  outputInterval: number;
+  dampingRatio: number;
+  loadProfile: DynamicLoadProfile;
+  equivalentMass: number;
+  equivalentStiffness: number;
+  peakDisplacement: number;
+  peakVelocity: number;
+  peakAcceleration: number;
+};
+
+export type DynamicTet4CpuSolveResult =
+  | {
+      ok: true;
+      result: DynamicTet4CpuResult;
+      diagnostics: DynamicTet4CpuDiagnostics;
+    }
+  | {
+      ok: false;
+      error: CpuSolverError;
+      diagnostics?: Partial<DynamicTet4CpuDiagnostics>;
     };
 
 export type Tet4GeometryResult =

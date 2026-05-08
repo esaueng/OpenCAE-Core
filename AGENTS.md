@@ -36,8 +36,8 @@ Do not implement CUDA.
 Do not implement a server-side solver.
 Do not implement CalculiX parsing.
 
-## Phase 2 Scope
-The CPU reference solver package is `@opencae/solver-cpu`. It is a dense small-fixture Tet4 linear static reference backend only, and solver logic must stay out of `@opencae/core`.
+## CPU Solver Scope
+The CPU reference solver package is `@opencae/solver-cpu`. It owns dense small-fixture Tet4 static and dynamic structural solve paths. Solver logic must stay out of `@opencae/core`.
 
 ## Repository Workflow
 Always commit and push changes to the current branch.
