@@ -1,5 +1,6 @@
 import { type NormalizedOpenCAEModel } from "@opencae/core";
 import { computeTet4Geometry } from "./geometry";
+import { dynamicCoreResultFromSolve } from "./results";
 import {
   assembleNodalForces,
   assembleSparseStiffness,
@@ -15,6 +16,7 @@ import type {
   CpuSolverInput,
   DynamicLoadProfile,
   DynamicResultField,
+  DynamicTet4CpuResult,
   DynamicTet4CpuDiagnostics,
   DynamicTet4CpuFrame,
   DynamicTet4CpuOptions,
@@ -179,18 +181,28 @@ export function solveDynamicMdofTet4Cpu(
     solver: "opencae-core-mdof-newmark"
   };
 
+  const dynamicResult: DynamicTet4CpuResult = {
+    staticResult: {
+      displacement: frames.at(-1)?.displacement.values ?? new Float64Array(model.counts.nodes * 3),
+      reactionForce: frames.at(-1)?.reactionForce ?? new Float64Array(model.counts.nodes * 3),
+      strain: frames.at(-1)?.strain.values ?? new Float64Array(model.counts.elements * 6),
+      stress: frames.at(-1)?.stress.values ?? new Float64Array(model.counts.elements * 6),
+      vonMises: frames.at(-1)?.vonMises.values ?? new Float64Array(model.counts.elements),
+      provenance: {
+        kind: "opencae_core_fea",
+        solver: "opencae-core-sparse-tet",
+        resultSource: "computed",
+        meshSource: model.meshProvenance?.meshSource === "actual_volume_mesh" ? "actual_volume_mesh" : "structured_block"
+      }
+    },
+    frames
+  };
+  dynamicResult.coreResult = dynamicCoreResultFromSolve(model, dynamicResult, diagnostics);
+  dynamicResult.staticResult.coreResult = dynamicResult.coreResult;
+
   return {
     ok: true,
-    result: {
-      staticResult: {
-        displacement: frames.at(-1)?.displacement.values ?? new Float64Array(model.counts.nodes * 3),
-        reactionForce: frames.at(-1)?.reactionForce ?? new Float64Array(model.counts.nodes * 3),
-        strain: new Float64Array(model.counts.elements * 6),
-        stress: frames.at(-1)?.stress.values ?? new Float64Array(model.counts.elements * 6),
-        vonMises: frames.at(-1)?.vonMises.values ?? new Float64Array(model.counts.elements)
-      },
-      frames
-    },
+    result: dynamicResult,
     diagnostics
   };
 }

@@ -4,7 +4,7 @@ import {
   singleTetStaticFixture,
   twoTetStaticFixture
 } from "@opencae/examples";
-import type { OpenCAEModelJson } from "@opencae/core";
+import { validateCoreResult, type OpenCAEModelJson } from "@opencae/core";
 import { solveStaticLinearTet, solveStaticLinearTet4Cpu, solveStaticLinearTetSparse } from "../src";
 
 describe("solveStaticLinearTet4Cpu", () => {
@@ -22,6 +22,21 @@ describe("solveStaticLinearTet4Cpu", () => {
     expect(result.diagnostics.dofs).toBe(12);
     expect(result.diagnostics.constrainedDofs).toBeGreaterThan(0);
     expect(result.diagnostics.freeDofs).toBeGreaterThan(0);
+  });
+
+  test("returns a valid Core result with surface mesh and fields", () => {
+    const result = solveStaticLinearTet(singleTetStaticFixture, { method: "sparse" });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.result.coreResult?.surfaceMesh?.triangles.length).toBeGreaterThan(0);
+    expect(result.result.coreResult?.fields.map((field) => field.type)).toEqual(
+      expect.arrayContaining(["displacement", "stress"])
+    );
+    expect(result.result.coreResult?.fields.every((field) => field.values.length > 0)).toBe(true);
+    expect(Number.isFinite(result.result.coreResult?.summary.maxDisplacement)).toBe(true);
+    expect(Number.isFinite(result.result.coreResult?.summary.maxStress)).toBe(true);
+    expect(validateCoreResult(result.result.coreResult!).ok).toBe(true);
   });
 
   test("solves two-tet-static", () => {

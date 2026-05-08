@@ -94,5 +94,19 @@ export {
   assembleNodalLoadVector,
   assembleNodalLoadVectorWithDiagnostics
 } from "./loads";
+export type {
+  CoreResultField,
+  CoreResultValidationIssue,
+  CoreResultValidationReport,
+  CoreSolveResult,
+  CoreSolveSummary,
+  CoreTransientSummary,
+  SolverSurfaceMesh
+} from "./results";
+export {
+  createCoreResultField,
+  solverSurfaceMeshFromModel,
+  validateCoreResult
+} from "./results";
 export { normalizeModelJson } from "./normalize";
 export { validateModelJson } from "./validation";

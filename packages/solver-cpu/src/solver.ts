@@ -9,6 +9,7 @@ import { collectTetCoordinates, recoverStress, recoverTet4Strain } from "./eleme
 import { computeTet4ElementStiffness, computeTet4Geometry, computeVonMisesStress } from "./element";
 import { solveDenseLinearSystem } from "./linear-solve";
 import { computeLinearElasticDMatrix } from "./material";
+import { staticCoreResultFromSolve } from "./results";
 import {
   addSparseEntry,
   conjugateGradient,
@@ -24,6 +25,7 @@ import type {
   CpuSolverError,
   CpuSolverInput,
   CpuSolverOptions,
+  StaticLinearTet4CpuResult,
   StaticLinearTet4CpuSolveResult
 } from "./types";
 
@@ -341,30 +343,35 @@ function finishSolve(
     });
   }
 
+  const result: StaticLinearTet4CpuResult = {
+    displacement,
+    reactionForce,
+    strain: recovery.strain,
+    stress: recovery.stress,
+    vonMises: recovery.vonMises,
+    provenance: {
+      kind: "opencae_core_fea",
+      solver: "opencae-core-sparse-tet",
+      resultSource: "computed",
+      meshSource: model.meshProvenance?.meshSource === "actual_volume_mesh" ? "actual_volume_mesh" : "structured_block"
+    }
+  };
+
+  const fullDiagnostics = {
+    dofs,
+    freeDofs: free.length,
+    constrainedDofs: constraints.size,
+    relativeResidual,
+    maxDisplacement: maxNodeVectorNorm(displacement),
+    maxVonMisesStress: maxAbs(recovery.vonMises),
+    ...diagnostics
+  };
+  result.coreResult = staticCoreResultFromSolve(model, result, fullDiagnostics);
+
   return {
     ok: true,
-    result: {
-      displacement,
-      reactionForce,
-      strain: recovery.strain,
-      stress: recovery.stress,
-      vonMises: recovery.vonMises,
-      provenance: {
-        kind: "opencae_core_fea",
-        solver: "opencae-core-sparse-tet",
-        resultSource: "computed",
-        meshSource: model.meshProvenance?.meshSource === "actual_volume_mesh" ? "actual_volume_mesh" : "structured_block"
-      }
-    },
-    diagnostics: {
-      dofs,
-      freeDofs: free.length,
-      constrainedDofs: constraints.size,
-      relativeResidual,
-      maxDisplacement: maxNodeVectorNorm(displacement),
-      maxVonMisesStress: maxAbs(recovery.vonMises),
-      ...diagnostics
-    }
+    result,
+    diagnostics: fullDiagnostics
   };
 }
 

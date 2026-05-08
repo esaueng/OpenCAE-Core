@@ -1,4 +1,4 @@
-import type { NormalizedOpenCAEModel, OpenCAEModelJson, ValidationReport } from "@opencae/core";
+import type { CoreSolveResult, NormalizedOpenCAEModel, OpenCAEModelJson, ValidationReport } from "@opencae/core";
 
 export type CpuSolverInput = OpenCAEModelJson | NormalizedOpenCAEModel;
 
@@ -51,6 +51,7 @@ export type StaticLinearTet4CpuResult = {
   strain: Float64Array;
   stress: Float64Array;
   vonMises: Float64Array;
+  coreResult?: CoreSolveResult;
   provenance?: {
     kind: "opencae_core_fea" | "local_estimate";
     solver: "opencae-core-sparse-tet" | "opencae-core-preview-sdof";
@@ -95,6 +96,7 @@ export type DynamicResultField = {
 export type DynamicTet4CpuResult = {
   staticResult: StaticLinearTet4CpuResult;
   frames: DynamicTet4CpuFrame[];
+  coreResult?: CoreSolveResult;
 };
 
 export type DynamicTet4CpuDiagnostics = CpuSolverDiagnostics & {

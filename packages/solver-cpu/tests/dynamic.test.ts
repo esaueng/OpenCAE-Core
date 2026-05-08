@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { singleTetStaticFixture } from "@opencae/examples";
-import type { OpenCAEModelJson } from "@opencae/core";
+import { validateCoreResult, type OpenCAEModelJson } from "@opencae/core";
 import { solveDynamicLinearTetMDOF, solveDynamicTet4Cpu, solveStaticLinearTet4Cpu } from "../src";
 
 const densityModel = {
@@ -45,6 +45,25 @@ describe("solveDynamicLinearTetMDOF", () => {
     expect(result.diagnostics.frameCount).toBe(4);
     expect(result.diagnostics.solver).toBe("opencae-core-mdof-newmark");
     expect(result.diagnostics.totalMass).toBeGreaterThan(0);
+  });
+
+  test("returns frame-aware Core result fields and a valid surface mesh", () => {
+    const result = solveDynamicLinearTetMDOF(densityModel, {
+      endTime: 0.02,
+      timeStep: 0.005,
+      outputInterval: 0.01
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const coreResult = result.result.coreResult;
+    expect(coreResult?.surfaceMesh?.triangles.length).toBeGreaterThan(0);
+    expect(coreResult?.summary.transient?.frameCount).toBe(result.result.frames.length);
+    expect(coreResult?.fields.some((field) => field.type === "velocity" && field.frameIndex === 0)).toBe(true);
+    expect(coreResult?.fields.some((field) => field.type === "acceleration" && field.timeSeconds === 0.02)).toBe(true);
+    expect(coreResult?.fields.some((field) => field.type === "safety_factor" && field.frameIndex === 0)).toBe(true);
+    expect(coreResult?.fields.every((field) => field.values.length > 0)).toBe(true);
+    expect(validateCoreResult(coreResult!).ok).toBe(true);
   });
 
   test("keeps frame field arrays compatible with the static Tet4 result", () => {
