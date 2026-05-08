@@ -65,6 +65,18 @@ if (solved.ok) {
 
 Production dynamic solving requires material density. It fails clearly instead of falling back to preview behavior.
 
+Production result provenance is restricted to OpenCAE Core FEA:
+
+- `kind: "opencae_core_fea"`
+- `resultSource: "computed"`
+- `solver: "opencae-core-sparse-tet"` or `solver: "opencae-core-mdof-tet"`
+
+If a complex model only has a display-bounds proxy instead of actual volume mesh data, production APIs fail with:
+
+```text
+OpenCAE Core requires an actual volume mesh for this solve. No estimate fallback was used.
+```
+
 ## Preview Solver API
 
 The legacy equivalent-SDOF dynamic approximation is available only through preview-named APIs:
@@ -74,6 +86,17 @@ import { solveCorePreviewDynamic } from "@opencae/solver-cpu";
 ```
 
 Preview results use the `PreviewDynamicResult` type and are marked with `resultSource: "computed_preview"`. Do not use preview dynamic results for complex Core FEA.
+
+## OpenCAE Core Cloud
+
+This repo includes `@opencae/core-cloud`, a minimal Node service under `services/opencae-core-cloud` that runs the same Core model validation and `@opencae/solver-cpu` engines in a container.
+
+Endpoints:
+
+- `GET /health`
+- `POST /solve`
+
+`/solve` accepts `static_stress` and `dynamic_structural` analysis types. It rejects preview requests, invalid Core models, and display-proxy mesh sources. The cloud runner does not generate input decks, invoke external FEA engines, or fall back to local estimates.
 
 ## Validation Suite
 

@@ -1,7 +1,6 @@
 import { extractBoundarySurfaceFacets } from "./mesh";
 import type {
   ElementBlockJson,
-  MeshProvenanceJson,
   NormalizedOpenCAEModel,
   OpenCAEModelJson,
   SurfaceFacetJson
@@ -29,12 +28,15 @@ export type CoreResultField = {
 };
 
 export type CoreTransientSummary = {
+  analysisType: "dynamic_structural";
   frameCount: number;
   startTime: number;
   endTime: number;
   timeStep: number;
   outputInterval: number;
   loadProfile?: string;
+  peakDisplacement: number;
+  peakDisplacementTimeSeconds: number;
   peakVelocity?: number;
   peakAcceleration?: number;
 };
@@ -47,12 +49,20 @@ export type CoreSolveSummary = {
   transient?: CoreTransientSummary;
 };
 
+export type CoreSolveProvenance = {
+  kind: "opencae_core_fea";
+  solver: "opencae-core-sparse-tet" | "opencae-core-mdof-tet";
+  resultSource: "computed";
+  meshSource: "actual_volume_mesh" | "structured_block_core";
+  units: "m-N-s-Pa" | "mm-N-s-MPa";
+};
+
 export type CoreSolveResult = {
   summary: CoreSolveSummary;
   fields: CoreResultField[];
   surfaceMesh?: SolverSurfaceMesh;
-  diagnostics: Record<string, unknown>;
-  provenance: MeshProvenanceJson;
+  diagnostics: unknown[];
+  provenance: CoreSolveProvenance;
 };
 
 export type CoreResultValidationIssue = {
@@ -123,6 +133,7 @@ export function createCoreResultField(
 export function validateCoreResult(result: CoreSolveResult): CoreResultValidationReport {
   const errors: CoreResultValidationIssue[] = [];
   validateSummary(result.summary, errors);
+  validateProvenance(result.provenance, errors);
 
   if (!Array.isArray(result.fields) || result.fields.length === 0) {
     errors.push(issue("empty-fields", "Core result must contain at least one field.", "fields"));
@@ -137,6 +148,21 @@ export function validateCoreResult(result: CoreSolveResult): CoreResultValidatio
     errors,
     warnings: []
   };
+}
+
+function validateProvenance(provenance: CoreSolveProvenance, errors: CoreResultValidationIssue[]): void {
+  if (provenance.kind !== "opencae_core_fea") {
+    errors.push(issue("invalid-provenance", "Core result provenance kind must be opencae_core_fea.", "provenance.kind"));
+  }
+  if (provenance.resultSource !== "computed") {
+    errors.push(issue("invalid-provenance", "Production Core result provenance must be computed.", "provenance.resultSource"));
+  }
+  if (provenance.solver !== "opencae-core-sparse-tet" && provenance.solver !== "opencae-core-mdof-tet") {
+    errors.push(issue("invalid-provenance", "Production Core result solver must be an OpenCAE Core solver.", "provenance.solver"));
+  }
+  if (provenance.meshSource !== "actual_volume_mesh" && provenance.meshSource !== "structured_block_core") {
+    errors.push(issue("invalid-provenance", "Production Core result meshSource must be actual Core mesh data.", "provenance.meshSource"));
+  }
 }
 
 function collectSurfaceFacets(model: OpenCAEModelJson | NormalizedOpenCAEModel): SurfaceFacetJson[] {

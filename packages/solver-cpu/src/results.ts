@@ -2,8 +2,8 @@ import {
   createCoreResultField,
   solverSurfaceMeshFromModel,
   type CoreResultField,
+  type CoreSolveProvenance,
   type CoreSolveResult,
-  type MeshProvenanceJson,
   type NormalizedOpenCAEModel
 } from "@opencae/core";
 import type { DynamicTet4CpuResult, DynamicTet4CpuDiagnostics, StaticLinearTet4CpuResult, CpuSolverDiagnostics } from "./types";
@@ -56,8 +56,8 @@ export function staticCoreResultFromSolve(
     },
     fields,
     surfaceMesh,
-    diagnostics: { ...diagnostics },
-    provenance: coreProvenance(result.provenance)
+    diagnostics: [{ ...diagnostics }],
+    provenance: coreProvenance(model, "opencae-core-sparse-tet")
   };
 }
 
@@ -135,24 +135,22 @@ export function dynamicCoreResultFromSolve(
       reactionForce: result.frames.length > 0 ? vectorSumMagnitude(result.frames.at(-1)?.reactionForce) : undefined,
       transient: {
         frameCount: diagnostics.frameCount,
+        analysisType: "dynamic_structural",
         startTime: diagnostics.startTime,
         endTime: diagnostics.endTime,
         timeStep: diagnostics.timeStep,
         outputInterval: diagnostics.outputInterval,
         loadProfile: diagnostics.loadProfile,
+        peakDisplacement: diagnostics.peakDisplacement,
+        peakDisplacementTimeSeconds: peakDisplacementTime(result),
         peakVelocity: diagnostics.peakVelocity,
         peakAcceleration: diagnostics.peakAcceleration
       }
     },
     fields,
     surfaceMesh,
-    diagnostics: { ...diagnostics },
-    provenance: {
-      kind: "opencae_core_fea",
-      solver: "opencae-core-sparse-tet",
-      resultSource: "computed",
-      meshSource: model.meshProvenance?.meshSource ?? "actual_volume_mesh"
-    }
+    diagnostics: [{ ...diagnostics }],
+    provenance: coreProvenance(model, "opencae-core-mdof-tet")
   };
 }
 
@@ -175,13 +173,30 @@ function hasYieldStrength(model: NormalizedOpenCAEModel): boolean {
   return model.materials.some((material) => (material.yieldStrength ?? 0) > 0);
 }
 
-function coreProvenance(provenance: StaticLinearTet4CpuResult["provenance"]): MeshProvenanceJson {
+function coreProvenance(
+  model: NormalizedOpenCAEModel,
+  solver: CoreSolveProvenance["solver"]
+): CoreSolveProvenance {
   return {
-    kind: provenance?.kind ?? "opencae_core_fea",
-    solver: provenance?.solver ?? "opencae-core-sparse-tet",
-    resultSource: provenance?.resultSource ?? "computed",
-    meshSource: provenance?.meshSource ?? "actual_volume_mesh"
+    kind: "opencae_core_fea",
+    solver,
+    resultSource: "computed",
+    meshSource: model.meshProvenance?.meshSource === "structured_block" ? "structured_block_core" : "actual_volume_mesh",
+    units: model.coordinateSystem.solverUnits
   };
+}
+
+function peakDisplacementTime(result: DynamicTet4CpuResult): number {
+  let peak = -1;
+  let time = 0;
+  for (const frame of result.frames) {
+    const value = maxNodeVectorNorm(frame.displacement.values);
+    if (value > peak) {
+      peak = value;
+      time = frame.timeSeconds;
+    }
+  }
+  return time;
 }
 
 function displacementUnits(model: NormalizedOpenCAEModel): string {

@@ -39,12 +39,13 @@ describe("Core result structures", () => {
         }
       ],
       surfaceMesh: solverSurfaceMeshFromModel(createSingleTetModel()),
-      diagnostics: {},
+      diagnostics: [],
       provenance: {
         kind: "opencae_core_fea",
         solver: "opencae-core-sparse-tet",
         resultSource: "computed",
-        meshSource: "actual_volume_mesh"
+        meshSource: "actual_volume_mesh",
+        units: "m-N-s-Pa"
       }
     };
 
@@ -85,11 +86,13 @@ describe("Core result structures", () => {
         coordinateSpace: "solver",
         source: "opencae_core_volume_mesh"
       },
-      diagnostics: {},
+      diagnostics: [],
       provenance: {
         kind: "opencae_core_fea",
         solver: "opencae-core-sparse-tet",
-        resultSource: "computed"
+        resultSource: "computed",
+        meshSource: "actual_volume_mesh",
+        units: "m-N-s-Pa"
       }
     };
 

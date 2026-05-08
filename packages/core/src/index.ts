@@ -99,6 +99,7 @@ export type {
   CoreResultValidationIssue,
   CoreResultValidationReport,
   CoreSolveResult,
+  CoreSolveProvenance,
   CoreSolveSummary,
   CoreTransientSummary,
   SolverSurfaceMesh

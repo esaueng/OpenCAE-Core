@@ -15,6 +15,8 @@ export function solveCoreStatic(
   model: CpuSolverInput,
   options: CpuSolverOptions = {}
 ): CoreStaticSolveResult {
+  const meshError = actualMeshError(model);
+  if (meshError) return meshError;
   const result = solveStaticLinearTet(model, {
     ...options,
     method: options.method ?? options.solverMode ?? "auto"
@@ -42,6 +44,18 @@ export function solveCoreDynamic(
   model: CpuSolverInput,
   options: DynamicTet4CpuOptions = {}
 ): CoreDynamicSolveResult {
+  const meshError = actualMeshError(model);
+  if (meshError) return meshError;
+  const step = model.steps[options.stepIndex ?? 0];
+  if (!step || step.type !== "dynamicLinear") {
+    return {
+      ok: false,
+      error: {
+        code: "invalid-dynamic-step",
+        message: "Production dynamic solves require a dynamicLinear step. No preview fallback was used."
+      }
+    };
+  }
   const result = solveDynamicLinearTetMDOF(model, options);
   if (!result.ok) return result;
   const coreResult = result.result.coreResult;
@@ -84,4 +98,19 @@ export function solveCorePreviewDynamic(
     result: previewResult,
     diagnostics: result.diagnostics
   };
+}
+
+function actualMeshError(
+  model: CpuSolverInput
+): { ok: false; error: { code: string; message: string } } | undefined {
+  if (model.meshProvenance?.meshSource === "display_bounds_proxy") {
+    return {
+      ok: false,
+      error: {
+        code: "actual-volume-mesh-required",
+        message: "OpenCAE Core requires an actual volume mesh for this solve. No estimate fallback was used."
+      }
+    };
+  }
+  return undefined;
 }

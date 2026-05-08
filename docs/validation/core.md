@@ -39,6 +39,12 @@ The CPU reference solver assumes small-strain, linear isotropic elasticity on Te
 
 Constraints must remove rigid-body modes. Missing or insufficient constraints are expected to fail clearly, usually through a singular CG system.
 
+Production APIs do not fall back to local estimates, display-bounds proxy solves, or preview dynamic scaling. A model that identifies its mesh source as a display-bounds proxy is rejected with:
+
+```text
+OpenCAE Core requires an actual volume mesh for this solve. No estimate fallback was used.
+```
+
 Dynamic solves require density on every solved material. Missing density fails with:
 
 ```text
@@ -100,6 +106,24 @@ The regression requires:
 - Solver surface mesh topology stays connected.
 
 This fixture is intentionally small. It validates topology, load routing, result surface extraction, and solver integration for non-block geometry. It is not a certified engineering benchmark.
+
+## OpenCAE Core Cloud
+
+The `services/opencae-core-cloud` package is the container-oriented Core Cloud runner. It exposes:
+
+- `GET /health`
+- `POST /solve`
+
+The health response reports:
+
+- `supportedAnalysisTypes: ["static_stress", "dynamic_structural"]`
+- `supportedSolvers: ["sparse_static", "mdof_dynamic"]`
+- `supportsActualVolumeMesh: true`
+- `supportsPreview: false`
+- `noCalculix: true`
+- `noLocalEstimateFallback: true`
+
+`POST /solve` validates an OpenCAE Core model, routes `static_stress` to `solveCoreStatic`, routes `dynamic_structural` to `solveCoreDynamic`, rejects preview requests, and returns a `CoreSolveResult`.
 
 ## Known Limitations
 

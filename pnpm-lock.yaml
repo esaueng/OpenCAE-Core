@@ -61,6 +61,19 @@ importers:
 
   packages/viewer: {}
 
+  services/opencae-core-cloud:
+    dependencies:
+      '@opencae/core':
+        specifier: workspace:*
+        version: link:../../packages/core
+      '@opencae/solver-cpu':
+        specifier: workspace:*
+        version: link:../../packages/solver-cpu
+    devDependencies:
+      '@opencae/examples':
+        specifier: workspace:*
+        version: link:../../packages/examples
+
 packages:
 
   '@esbuild/aix-ppc64@0.25.12':
