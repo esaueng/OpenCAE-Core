@@ -1,6 +1,7 @@
 import type {
   BodyGravityLoadJson,
   LoadJson,
+  NormalizedOpenCAEModel,
   NodalForceLoadJson,
   OpenCAEModelJson,
   PressureLoadJson,
@@ -9,6 +10,16 @@ import type {
   SurfaceSetJson
 } from "./model-json";
 import { elementNodeCount, extractBoundarySurfaceFacets, tet4Volume } from "./mesh";
+
+export type LoadAssemblyModel = OpenCAEModelJson | NormalizedOpenCAEModel;
+
+type LoadSurfaceFacet = Omit<SurfaceFacetJson, "nodes"> & {
+  nodes: ArrayLike<number> & Iterable<number>;
+};
+
+type LoadSurfaceSet = Omit<SurfaceSetJson, "facets"> & {
+  facets: ArrayLike<number> & Iterable<number>;
+};
 
 export type LoadAssemblyError = {
   code: string;
@@ -35,7 +46,7 @@ export type LoadAssemblyResult = {
   diagnostics: LoadAssemblyDiagnostics;
 };
 
-export function assembleNodalLoadVector(model: OpenCAEModelJson, stepLoadNames: string[]): Float64Array {
+export function assembleNodalLoadVector(model: LoadAssemblyModel, stepLoadNames: string[]): Float64Array {
   const result = assembleNodalLoadVectorWithDiagnostics(model, stepLoadNames);
   if (result.diagnostics.errors.length > 0) {
     throw new Error(
@@ -46,7 +57,7 @@ export function assembleNodalLoadVector(model: OpenCAEModelJson, stepLoadNames: 
 }
 
 export function assembleNodalLoadVectorWithDiagnostics(
-  model: OpenCAEModelJson,
+  model: LoadAssemblyModel,
   stepLoadNames: string[]
 ): LoadAssemblyResult {
   const vector = new Float64Array((model.nodes.coordinates.length / 3) * 3);
@@ -99,7 +110,7 @@ export function assembleNodalLoadVectorWithDiagnostics(
 }
 
 function assembleNodalForce(
-  model: OpenCAEModelJson,
+  model: LoadAssemblyModel,
   vector: Float64Array,
   load: NodalForceLoadJson,
   loadTotal: [number, number, number],
@@ -122,7 +133,7 @@ function assembleNodalForce(
 }
 
 function assembleSurfaceForce(
-  model: OpenCAEModelJson,
+  model: LoadAssemblyModel,
   vector: Float64Array,
   load: SurfaceForceLoadJson,
   loadTotal: [number, number, number],
@@ -149,7 +160,7 @@ function assembleSurfaceForce(
 }
 
 function assemblePressure(
-  model: OpenCAEModelJson,
+  model: LoadAssemblyModel,
   vector: Float64Array,
   load: PressureLoadJson,
   loadTotal: [number, number, number],
@@ -184,7 +195,7 @@ function assemblePressure(
 }
 
 function assembleBodyGravity(
-  model: OpenCAEModelJson,
+  model: LoadAssemblyModel,
   vector: Float64Array,
   load: BodyGravityLoadJson,
   loadTotal: [number, number, number],
@@ -239,12 +250,12 @@ function assembleBodyGravity(
 }
 
 function resolveSurfaceSelection(
-  model: OpenCAEModelJson,
+  model: LoadAssemblyModel,
   surfaceSetName: string,
   loadName: string,
   diagnostics: LoadAssemblyDiagnostics
-): { surfaceSet: SurfaceSetJson; facets: SurfaceFacetJson[]; area: number } | undefined {
-  const surfaceSet = model.surfaceSets?.find((set) => set.name === surfaceSetName);
+): { surfaceSet: LoadSurfaceSet; facets: LoadSurfaceFacet[]; area: number } | undefined {
+  const surfaceSet = model.surfaceSets?.find((set) => set.name === surfaceSetName) as LoadSurfaceSet | undefined;
   if (!surfaceSet) {
     diagnostics.errors.push({
       code: "missing-surface-set",
@@ -254,9 +265,9 @@ function resolveSurfaceSelection(
     return undefined;
   }
 
-  const surfaceFacets = model.surfaceFacets ?? extractBoundarySurfaceFacets(model);
+  const surfaceFacets = (model.surfaceFacets ?? extractBoundarySurfaceFacets(model as OpenCAEModelJson)) as LoadSurfaceFacet[];
   const facetById = new Map(surfaceFacets.map((facet) => [facet.id, facet]));
-  const facets: SurfaceFacetJson[] = [];
+  const facets: LoadSurfaceFacet[] = [];
   let area = 0;
 
   for (const facetId of surfaceSet.facets) {
@@ -278,7 +289,7 @@ function resolveSurfaceSelection(
 
 function distributeToFacet(
   vector: Float64Array,
-  facet: SurfaceFacetJson,
+  facet: LoadSurfaceFacet,
   facetForce: [number, number, number],
   loadTotal: [number, number, number]
 ): void {
@@ -289,13 +300,13 @@ function distributeToFacet(
   addVector(loadTotal, facetForce);
 }
 
-function facetArea(model: OpenCAEModelJson, facet: SurfaceFacetJson): number {
+function facetArea(model: LoadAssemblyModel, facet: LoadSurfaceFacet): number {
   return facet.area ?? facetGeometry(model, facet).area;
 }
 
 function facetGeometry(
-  model: OpenCAEModelJson,
-  facet: SurfaceFacetJson
+  model: LoadAssemblyModel,
+  facet: LoadSurfaceFacet
 ): { area: number; normal: [number, number, number] } {
   const normal = facet.normal;
   const area = facet.area;

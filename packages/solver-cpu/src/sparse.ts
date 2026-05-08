@@ -17,6 +17,7 @@ export type ConjugateGradientResult =
       ok: true;
       solution: Float64Array;
       iterations: number;
+      residualNorm: number;
       relativeResidual: number;
     }
   | {
@@ -26,8 +27,31 @@ export type ConjugateGradientResult =
         message: string;
       };
       iterations: number;
+      residualNorm: number;
       relativeResidual: number;
     };
+
+export type ConjugateGradientOptions = {
+  tolerance?: number;
+  maxIterations?: number;
+  preconditioner?: "none" | "jacobi";
+};
+
+export class CooAccumulator {
+  private readonly builder: SparseMatrixBuilder;
+
+  constructor(rowCount: number, colCount = rowCount) {
+    this.builder = createSparseMatrixBuilder(rowCount, colCount);
+  }
+
+  addEntry(row: number, col: number, value: number): void {
+    addSparseEntry(this.builder, row, col, value);
+  }
+
+  finalizeCsr(): CsrMatrix {
+    return toCsrMatrix(this.builder);
+  }
+}
 
 export function createSparseMatrixBuilder(rowCount: number, colCount = rowCount): SparseMatrixBuilder {
   return {
@@ -79,6 +103,8 @@ export function csrMatVec(matrix: CsrMatrix, vector: Float64Array): Float64Array
   return result;
 }
 
+export const sparseMatVec = csrMatVec;
+
 export function csrDiagonal(matrix: CsrMatrix): Float64Array {
   const diagonal = new Float64Array(matrix.rowCount);
   for (let row = 0; row < matrix.rowCount; row += 1) {
@@ -92,10 +118,31 @@ export function csrDiagonal(matrix: CsrMatrix): Float64Array {
   return diagonal;
 }
 
+export function jacobiPreconditioner(matrix: CsrMatrix): Float64Array {
+  const diagonal = csrDiagonal(matrix);
+  const inverse = new Float64Array(diagonal.length);
+  for (let i = 0; i < diagonal.length; i += 1) {
+    inverse[i] = Math.abs(diagonal[i]) > 1e-30 ? 1 / diagonal[i] : 1;
+  }
+  return inverse;
+}
+
 export function conjugateGradient(
   matrix: CsrMatrix,
   rhs: Float64Array,
   options: { tolerance?: number; maxIterations?: number; jacobi?: boolean } = {}
+): ConjugateGradientResult {
+  return solveConjugateGradient(matrix, rhs, {
+    tolerance: options.tolerance,
+    maxIterations: options.maxIterations,
+    preconditioner: options.jacobi === false ? "none" : "jacobi"
+  });
+}
+
+export function solveConjugateGradient(
+  matrix: CsrMatrix,
+  rhs: Float64Array,
+  options: ConjugateGradientOptions = {}
 ): ConjugateGradientResult {
   const tolerance = options.tolerance ?? 1e-10;
   const maxIterations = options.maxIterations ?? Math.max(100, matrix.rowCount * 20);
@@ -103,13 +150,14 @@ export function conjugateGradient(
   const r = Float64Array.from(rhs);
   const z = new Float64Array(rhs.length);
   const p = new Float64Array(rhs.length);
-  const diagonal = options.jacobi === false ? undefined : csrDiagonal(matrix);
+  const diagonal = options.preconditioner === "none" ? undefined : csrDiagonal(matrix);
   applyPreconditioner(r, z, diagonal);
   p.set(z);
   let rzOld = dot(r, z);
   const rhsNorm = Math.max(norm(rhs), 1);
-  if (Math.sqrt(Math.max(rzOld, 0)) / rhsNorm <= tolerance) {
-    return { ok: true, solution: x, iterations: 0, relativeResidual: 0 };
+  const initialResidualNorm = norm(r);
+  if (initialResidualNorm / rhsNorm <= tolerance) {
+    return { ok: true, solution: x, iterations: 0, residualNorm: initialResidualNorm, relativeResidual: 0 };
   }
 
   for (let iteration = 1; iteration <= maxIterations; iteration += 1) {
@@ -123,6 +171,7 @@ export function conjugateGradient(
           message: "Sparse CG encountered a singular or indefinite system."
         },
         iterations: iteration,
+        residualNorm: norm(r),
         relativeResidual: norm(r) / rhsNorm
       };
     }
@@ -133,7 +182,7 @@ export function conjugateGradient(
     }
     const relativeResidual = norm(r) / rhsNorm;
     if (relativeResidual <= tolerance) {
-      return { ok: true, solution: x, iterations: iteration, relativeResidual };
+      return { ok: true, solution: x, iterations: iteration, residualNorm: norm(r), relativeResidual };
     }
     applyPreconditioner(r, z, diagonal);
     const rzNew = dot(r, z);
@@ -151,6 +200,7 @@ export function conjugateGradient(
       message: "Sparse CG did not converge within maxIterations."
     },
     iterations: maxIterations,
+    residualNorm: norm(r),
     relativeResidual: norm(r) / rhsNorm
   };
 }
@@ -197,12 +247,18 @@ function applyPreconditioner(source: Float64Array, target: Float64Array, diagona
   }
 }
 
-function dot(a: Float64Array, b: Float64Array): number {
+export function dot(a: Float64Array, b: Float64Array): number {
   let result = 0;
   for (let i = 0; i < a.length; i += 1) result += a[i] * b[i];
   return result;
 }
 
-function norm(values: Float64Array): number {
+export function axpy(alpha: number, x: Float64Array, y: Float64Array): void {
+  for (let i = 0; i < y.length; i += 1) {
+    y[i] += alpha * x[i];
+  }
+}
+
+export function norm(values: Float64Array): number {
   return Math.sqrt(dot(values, values));
 }

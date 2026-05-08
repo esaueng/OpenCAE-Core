@@ -5,7 +5,7 @@ import {
   twoTetStaticFixture
 } from "@opencae/examples";
 import type { OpenCAEModelJson } from "@opencae/core";
-import { solveStaticLinearTet4Cpu } from "../src";
+import { solveStaticLinearTet, solveStaticLinearTet4Cpu, solveStaticLinearTetSparse } from "../src";
 
 describe("solveStaticLinearTet4Cpu", () => {
   test("solves single-tet-static", () => {
@@ -35,6 +35,20 @@ describe("solveStaticLinearTet4Cpu", () => {
     expect(result.diagnostics.relativeResidual).toBeLessThan(1e-8);
   });
 
+  test("matches dense and sparse results on a small Tet4 model", () => {
+    const dense = solveStaticLinearTet(singleTetStaticFixture, { method: "dense" });
+    const sparse = solveStaticLinearTet(singleTetStaticFixture, { method: "sparse", tolerance: 1e-12 });
+
+    expect(dense.ok).toBe(true);
+    expect(sparse.ok).toBe(true);
+    if (!dense.ok || !sparse.ok) return;
+    expect(dense.diagnostics.solverMode).toBe("dense");
+    expect(sparse.diagnostics.solverMode).toBe("sparse");
+    for (let index = 0; index < dense.result.displacement.length; index += 1) {
+      expect(sparse.result.displacement[index]).toBeCloseTo(dense.result.displacement[index], 8);
+    }
+  });
+
   test("returns ok false for invalid connectivity", () => {
     const result = solveStaticLinearTet4Cpu(invalidConnectivityFixture);
 
@@ -51,6 +65,44 @@ describe("solveStaticLinearTet4Cpu", () => {
     expect(result.result.displacement[1]).toBeCloseTo(0, 14);
     expect(result.result.displacement[2]).toBeCloseTo(0, 14);
     expect(Array.from(result.result.reactionForce).every(Number.isFinite)).toBe(true);
+  });
+
+  test("axial tension produces displacement in the loaded direction", () => {
+    const model: OpenCAEModelJson = {
+      ...singleTetStaticFixture,
+      loads: [
+        {
+          name: "axial",
+          type: "nodalForce",
+          nodeSet: "loadNodes",
+          vector: [100, 0, 0]
+        }
+      ],
+      steps: [
+        {
+          name: "loadStep",
+          type: "staticLinear",
+          boundaryConditions: ["fixedSupport", "settlement", "supportY", "supportZ"],
+          loads: ["axial"]
+        }
+      ]
+    };
+
+    const result = solveStaticLinearTet(model, { method: "sparse" });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.result.displacement[3 * 3]).toBeGreaterThan(0);
+    expect(result.diagnostics.relativeResidual).toBeLessThan(1e-8);
+  });
+
+  test("cantilever tip load produces displacement in the load direction", () => {
+    const result = solveStaticLinearTet(singleTetStaticFixture, { method: "sparse" });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.result.displacement[3 * 3 + 2]).toBeLessThan(0);
+    expect(result.diagnostics.relativeResidual).toBeLessThan(1e-8);
   });
 
   test("fails when maxDofs is exceeded", () => {
@@ -155,6 +207,47 @@ describe("solveStaticLinearTet4Cpu", () => {
     expect(reaction[2]).toBeCloseTo(90, 8);
   });
 
+  test("auto-selects sparse for surface loads", () => {
+    const model: OpenCAEModelJson = {
+      ...singleTetStaticFixture,
+      schemaVersion: "0.2.0",
+      surfaceFacets: [
+        {
+          id: 1,
+          element: 0,
+          elementFace: 0,
+          nodes: [1, 2, 3],
+          area: 0.8660254037844386,
+          normal: [0.5773502691896258, 0.5773502691896258, 0.5773502691896258],
+          center: [1 / 3, 1 / 3, 1 / 3]
+        }
+      ],
+      surfaceSets: [{ name: "tipFace", facets: [1] }],
+      loads: [
+        {
+          name: "faceLoad",
+          type: "surfaceForce",
+          surfaceSet: "tipFace",
+          totalForce: [0, 0, -90]
+        }
+      ],
+      steps: [
+        {
+          name: "loadStep",
+          type: "staticLinear",
+          boundaryConditions: ["fixedSupport", "settlement", "supportY", "supportZ"],
+          loads: ["faceLoad"]
+        }
+      ]
+    };
+
+    const result = solveStaticLinearTet(model, { method: "auto" });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.diagnostics.solverMode).toBe("sparse");
+  });
+
   test("solves pressure loads as pressure times facet area", () => {
     const area = 0.8660254037844386;
     const model: OpenCAEModelJson = {
@@ -197,6 +290,44 @@ describe("solveStaticLinearTet4Cpu", () => {
     if (!result.ok) return;
     const reaction = sumVectorDofs(result.result.reactionForce);
     expect(reaction[2]).toBeCloseTo(50 * area, 8);
+  });
+
+  test("solves body gravity loads and balances reactions against mass acceleration", () => {
+    const model: OpenCAEModelJson = {
+      ...singleTetStaticFixture,
+      schemaVersion: "0.2.0",
+      materials: [
+        {
+          ...singleTetStaticFixture.materials[0],
+          density: 12
+        }
+      ],
+      loads: [
+        {
+          name: "gravity",
+          type: "bodyGravity",
+          acceleration: [0, 0, -9.81]
+        }
+      ],
+      steps: [
+        {
+          name: "loadStep",
+          type: "staticLinear",
+          boundaryConditions: ["fixedSupport", "settlement", "supportY", "supportZ"],
+          loads: ["gravity"]
+        }
+      ]
+    };
+
+    const result = solveStaticLinearTetSparse(model);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const reaction = sumVectorDofs(result.result.reactionForce);
+    expect(reaction[0]).toBeCloseTo(0, 8);
+    expect(reaction[1]).toBeCloseTo(0, 8);
+    expect(reaction[2]).toBeCloseTo(19.62, 8);
+    expect(Number.isFinite(result.diagnostics.relativeResidual)).toBe(true);
   });
 
   test("returns structured unsupported-element-type for Tet10 instead of downgrading", () => {

@@ -7,6 +7,7 @@ export type CpuSolverOptions = {
   maxDofs?: number;
   singularTolerance?: number;
   solverMode?: "auto" | "dense" | "sparse";
+  method?: "auto" | "dense" | "sparse";
   tolerance?: number;
   maxIterations?: number;
 };

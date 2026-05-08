@@ -86,6 +86,7 @@ export {
 export type {
   LoadAssemblyDiagnostics,
   LoadAssemblyError,
+  LoadAssemblyModel,
   LoadAssemblyPerLoadDiagnostics,
   LoadAssemblyResult
 } from "./loads";

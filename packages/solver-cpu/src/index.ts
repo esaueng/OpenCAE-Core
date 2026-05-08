@@ -26,13 +26,21 @@ export {
 export { solveDenseLinearSystem } from "./linear-solve";
 export {
   addSparseEntry,
+  axpy,
   conjugateGradient,
+  CooAccumulator,
   createSparseMatrixBuilder,
   csrDiagonal,
   csrMatVec,
+  dot,
+  jacobiPreconditioner,
+  norm,
   reduceCsrSystem,
+  solveConjugateGradient,
+  sparseMatVec,
   toCsrMatrix
 } from "./sparse";
-export type { ConjugateGradientResult, CsrMatrix, SparseMatrixBuilder } from "./sparse";
+export type { ConjugateGradientOptions, ConjugateGradientResult, CsrMatrix, SparseMatrixBuilder } from "./sparse";
 export { solveDynamicTet4Cpu, solvePreviewSdofTet4Cpu } from "./dynamic";
-export { solveStaticLinearTet4Cpu } from "./solver";
+export { solveStaticLinearTet, solveStaticLinearTet4Cpu } from "./solver";
+export { solveStaticLinearTetSparse } from "./static-sparse";

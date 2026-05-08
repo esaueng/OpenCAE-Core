@@ -1,9 +1,8 @@
 import {
+  assembleNodalLoadVectorWithDiagnostics,
   normalizeModelJson,
-  type LoadJson,
   type NormalizedElementBlock,
   type NormalizedOpenCAEModel,
-  type NormalizedSurfaceFacet,
   type NormalizedTet4ElementBlock,
 } from "@opencae/core";
 import { collectTetCoordinates, recoverStress, recoverTet4Strain } from "./element";
@@ -76,8 +75,16 @@ export function solveStaticLinearTet4Cpu(
   }
 
   const free = enumerateFreeDofs(dofs, constraints.values);
-  const loads = assembleNodalForces(model, step.loads);
-  const solverMode = selectSolverMode(dofs, options);
+  const loadAssembly = assembleNodalForcesWithDiagnostics(model, step.loads);
+  if (!loadAssembly.ok) {
+    return failure(loadAssembly.error.code, loadAssembly.error.message, {
+      dofs,
+      constrainedDofs,
+      freeDofs
+    });
+  }
+  const loads = loadAssembly.forces;
+  const solverMode = selectSolverMode(dofs, options, model, step.loads);
 
   if (solverMode === "dense") {
     const assembly = assembleDenseStiffness(model);
@@ -88,6 +95,17 @@ export function solveStaticLinearTet4Cpu(
   const assembly = assembleSparseStiffness(model);
   if (!assembly.ok) return failure(assembly.error.code, assembly.error.message, { dofs });
   return solveSparseSystem(model, assembly.stiffness, loads, constraints.values, free, options);
+}
+
+export function solveStaticLinearTet(
+  input: CpuSolverInput,
+  options: CpuSolverOptions = {}
+): StaticLinearTet4CpuSolveResult {
+  const method = options.method ?? options.solverMode ?? "auto";
+  return solveStaticLinearTet4Cpu(input, {
+    ...options,
+    solverMode: method
+  });
 }
 
 export function getNormalizedModel(input: CpuSolverInput):
@@ -145,34 +163,28 @@ export function assembleSparseStiffness(model: NormalizedOpenCAEModel):
 }
 
 export function assembleNodalForces(model: NormalizedOpenCAEModel, loadNames: string[]): Float64Array {
-  const forces = new Float64Array(model.counts.nodes * 3);
-  const activeLoads = new Set(loadNames);
-  const nodeSets = new Map(model.nodeSets.map((nodeSet) => [nodeSet.name, nodeSet.nodes]));
-  const surfaceSets = new Map(model.surfaceSets.map((surfaceSet) => [surfaceSet.name, surfaceSet.facets]));
-  const facets = new Map(model.surfaceFacets.map((facet) => [facet.id, facet]));
-
-  for (const load of model.loads) {
-    if (!activeLoads.has(load.name)) continue;
-    if (load.type === "nodalForce") {
-      const nodes = nodeSets.get(load.nodeSet);
-      if (!nodes) continue;
-      for (const node of nodes) {
-        forces[node * 3] += load.vector[0];
-        forces[node * 3 + 1] += load.vector[1];
-        forces[node * 3 + 2] += load.vector[2];
-      }
-      continue;
-    }
-
-    const facetIds = surfaceSets.get(load.surfaceSet);
-    if (!facetIds || facetIds.length === 0) continue;
-    if (load.type === "surfaceForce") {
-      distributeSurfaceForce(model, forces, load, facetIds, facets);
-    } else {
-      distributePressure(model, forces, load, facetIds, facets);
-    }
+  const result = assembleNodalForcesWithDiagnostics(model, loadNames);
+  if (!result.ok) {
+    throw new Error(result.error.message);
   }
-  return forces;
+  return result.forces;
+}
+
+function assembleNodalForcesWithDiagnostics(model: NormalizedOpenCAEModel, loadNames: string[]):
+  | { ok: true; forces: Float64Array }
+  | { ok: false; error: CpuSolverError } {
+  const result = assembleNodalLoadVectorWithDiagnostics(model, loadNames);
+  if (result.diagnostics.errors.length > 0) {
+    const firstError = result.diagnostics.errors[0];
+    return {
+      ok: false,
+      error: {
+        code: firstError.code,
+        message: result.diagnostics.errors.map((error) => error.message).join("; ")
+      }
+    };
+  }
+  return { ok: true, forces: result.vector };
 }
 
 export function collectConstraints(model: NormalizedOpenCAEModel, boundaryConditionNames: string[]):
@@ -444,84 +456,6 @@ function scatterSparseElementStiffness(
   }
 }
 
-function distributeSurfaceForce(
-  model: NormalizedOpenCAEModel,
-  forces: Float64Array,
-  load: Extract<LoadJson, { type: "surfaceForce" }>,
-  facetIds: Uint32Array,
-  facets: Map<number, NormalizedSurfaceFacet>
-): void {
-  const selected = Array.from(facetIds, (id) => facets.get(id)).filter((facet): facet is NormalizedSurfaceFacet => !!facet);
-  const totalArea = selected.reduce((sum, facet) => sum + facetArea(model, facet), 0);
-  if (totalArea <= 0) return;
-  for (const facet of selected) {
-    const areaWeight = facetArea(model, facet) / totalArea;
-    const contribution: [number, number, number] = [
-      load.totalForce[0] * areaWeight,
-      load.totalForce[1] * areaWeight,
-      load.totalForce[2] * areaWeight
-    ];
-    distributeFacetForce(forces, facet, contribution);
-  }
-}
-
-function distributePressure(
-  model: NormalizedOpenCAEModel,
-  forces: Float64Array,
-  load: Extract<LoadJson, { type: "pressure" }>,
-  facetIds: Uint32Array,
-  facets: Map<number, NormalizedSurfaceFacet>
-): void {
-  for (const facetId of facetIds) {
-    const facet = facets.get(facetId);
-    if (!facet) continue;
-    const area = facetArea(model, facet);
-    const direction = normalizeVector(load.direction ?? facet.normal ?? [0, 0, 0]);
-    distributeFacetForce(forces, facet, [
-      direction[0] * load.pressure * area,
-      direction[1] * load.pressure * area,
-      direction[2] * load.pressure * area
-    ]);
-  }
-}
-
-function distributeFacetForce(
-  forces: Float64Array,
-  facet: NormalizedSurfaceFacet,
-  force: [number, number, number]
-): void {
-  const nodes = Array.from(facet.nodes).slice(0, 3);
-  if (nodes.length === 0) return;
-  for (const node of nodes) {
-    forces[node * 3] += force[0] / nodes.length;
-    forces[node * 3 + 1] += force[1] / nodes.length;
-    forces[node * 3 + 2] += force[2] / nodes.length;
-  }
-}
-
-function facetArea(model: NormalizedOpenCAEModel, facet: NormalizedSurfaceFacet): number {
-  if (facet.area && facet.area > 0) return facet.area;
-  const nodes = Array.from(facet.nodes);
-  const a = nodeCoordinates(model, nodes[0]);
-  const b = nodeCoordinates(model, nodes[1]);
-  const c = nodeCoordinates(model, nodes[2]);
-  const ux = b[0] - a[0];
-  const uy = b[1] - a[1];
-  const uz = b[2] - a[2];
-  const vx = c[0] - a[0];
-  const vy = c[1] - a[1];
-  const vz = c[2] - a[2];
-  return 0.5 * Math.hypot(uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx);
-}
-
-function nodeCoordinates(model: NormalizedOpenCAEModel, node: number): [number, number, number] {
-  return [
-    model.nodes.coordinates[node * 3],
-    model.nodes.coordinates[node * 3 + 1],
-    model.nodes.coordinates[node * 3 + 2]
-  ];
-}
-
 function setConstraint(
   values: Map<number, number>,
   dof: number,
@@ -633,14 +567,20 @@ export function maxAbs(values: Float64Array): number {
   return max;
 }
 
-function normalizeVector(vector: readonly [number, number, number]): [number, number, number] {
-  const length = Math.hypot(vector[0], vector[1], vector[2]);
-  return length > 0 ? [vector[0] / length, vector[1] / length, vector[2] / length] : [0, 0, 0];
+function selectSolverMode(
+  dofs: number,
+  options: CpuSolverOptions,
+  model: NormalizedOpenCAEModel,
+  activeLoadNames: string[]
+): "dense" | "sparse" {
+  if (options.solverMode === "dense" || options.solverMode === "sparse") return options.solverMode;
+  if (activeLoadsRequireSparse(model, activeLoadNames)) return "sparse";
+  return dofs <= 300 ? "dense" : "sparse";
 }
 
-function selectSolverMode(dofs: number, options: CpuSolverOptions): "dense" | "sparse" {
-  if (options.solverMode === "dense" || options.solverMode === "sparse") return options.solverMode;
-  return dofs <= 300 ? "dense" : "sparse";
+function activeLoadsRequireSparse(model: NormalizedOpenCAEModel, activeLoadNames: string[]): boolean {
+  const active = new Set(activeLoadNames);
+  return model.loads.some((load) => active.has(load.name) && (load.type === "surfaceForce" || load.type === "pressure"));
 }
 
 function failure(
