@@ -33,6 +33,8 @@ export type CpuSolverError = {
   report?: ValidationReport;
 };
 
+export type CoreFeaResult = CoreSolveResult;
+
 export type CpuSolverDiagnostics = {
   dofs: number;
   freeDofs: number;
@@ -99,6 +101,11 @@ export type DynamicTet4CpuResult = {
   coreResult?: CoreSolveResult;
 };
 
+export type PreviewDynamicResult = DynamicTet4CpuResult & {
+  preview: true;
+  provenance: NonNullable<StaticLinearTet4CpuResult["provenance"]>;
+};
+
 export type DynamicTet4CpuDiagnostics = CpuSolverDiagnostics & {
   frameCount: number;
   startTime: number;
@@ -129,6 +136,42 @@ export type DynamicTet4CpuSolveResult =
   | {
       ok: true;
       result: DynamicTet4CpuResult;
+      diagnostics: DynamicTet4CpuDiagnostics;
+    }
+  | {
+      ok: false;
+      error: CpuSolverError;
+      diagnostics?: Partial<DynamicTet4CpuDiagnostics>;
+    };
+
+export type CoreStaticSolveResult =
+  | {
+      ok: true;
+      result: CoreFeaResult;
+      diagnostics: CpuSolverDiagnostics;
+    }
+  | {
+      ok: false;
+      error: CpuSolverError;
+      diagnostics?: Partial<CpuSolverDiagnostics>;
+    };
+
+export type CoreDynamicSolveResult =
+  | {
+      ok: true;
+      result: CoreFeaResult;
+      diagnostics: DynamicTet4CpuDiagnostics;
+    }
+  | {
+      ok: false;
+      error: CpuSolverError;
+      diagnostics?: Partial<DynamicTet4CpuDiagnostics>;
+    };
+
+export type PreviewDynamicSolveResult =
+  | {
+      ok: true;
+      result: PreviewDynamicResult;
       diagnostics: DynamicTet4CpuDiagnostics;
     }
   | {

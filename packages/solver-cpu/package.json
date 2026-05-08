@@ -1,7 +1,7 @@
 {
   "name": "@opencae/solver-cpu",
   "version": "0.1.0",
-  "description": "Dense CPU reference solver backend for OpenCAE Core.",
+  "description": "CPU reference solver backend with static sparse and MDOF dynamic APIs for OpenCAE Core.",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

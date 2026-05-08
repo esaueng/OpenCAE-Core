@@ -3,6 +3,9 @@ export type {
   CpuSolverError,
   CpuSolverInput,
   CpuSolverOptions,
+  CoreDynamicSolveResult,
+  CoreFeaResult,
+  CoreStaticSolveResult,
   DenseLinearSolveResult,
   DynamicLoadProfile,
   DynamicResultField,
@@ -11,6 +14,8 @@ export type {
   DynamicTet4CpuOptions,
   DynamicTet4CpuResult,
   DynamicTet4CpuSolveResult,
+  PreviewDynamicResult,
+  PreviewDynamicSolveResult,
   StaticLinearTet4CpuResult,
   StaticLinearTet4CpuSolveResult,
   Tet4ElementStiffnessResult,
@@ -45,3 +50,8 @@ export { solveDynamicTet4Cpu, solvePreviewSdofTet4Cpu } from "./dynamic";
 export { solveDynamicLinearTetMDOF, solveDynamicMdofTet4Cpu } from "./dynamic-mdof";
 export { solveStaticLinearTet, solveStaticLinearTet4Cpu } from "./solver";
 export { solveStaticLinearTetSparse } from "./static-sparse";
+export {
+  solveCoreDynamic,
+  solveCorePreviewDynamic,
+  solveCoreStatic
+} from "./core-api";
