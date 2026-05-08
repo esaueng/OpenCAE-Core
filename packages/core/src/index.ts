@@ -83,5 +83,15 @@ export {
   surfaceNormalAverage,
   tet4Volume
 } from "./mesh";
+export type {
+  LoadAssemblyDiagnostics,
+  LoadAssemblyError,
+  LoadAssemblyPerLoadDiagnostics,
+  LoadAssemblyResult
+} from "./loads";
+export {
+  assembleNodalLoadVector,
+  assembleNodalLoadVectorWithDiagnostics
+} from "./loads";
 export { normalizeModelJson } from "./normalize";
 export { validateModelJson } from "./validation";
