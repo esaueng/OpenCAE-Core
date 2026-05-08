@@ -83,7 +83,7 @@ describe("normalizeModelJson", () => {
         }
       ],
       surfaceSets: [{ name: "baseFace", facets: [7] }],
-      coordinateSystem: { solverUnits: "m-N-s-Pa", renderCoordinateSpace: "cad" }
+      coordinateSystem: { solverUnits: "m-N-s-Pa", renderCoordinateSpace: "display_model" }
     };
 
     const result = normalizeModelJson(model);
@@ -93,6 +93,7 @@ describe("normalizeModelJson", () => {
     expect(result.model?.surfaceFacets[0].nodes).toBeInstanceOf(Uint32Array);
     expect(result.model?.surfaceSets[0].facets).toBeInstanceOf(Uint32Array);
     expect(result.model?.coordinateSystem.solverUnits).toBe("m-N-s-Pa");
+    expect(result.model?.coordinateSystem.renderCoordinateSpace).toBe("display_model");
     expect(result.model?.counts.surfaceFacets).toBe(1);
     expect(result.model?.counts.surfaceSets).toBe(1);
   });

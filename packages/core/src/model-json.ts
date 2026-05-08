@@ -81,7 +81,7 @@ export type SurfaceSetJson = {
 
 export type CoordinateSystemJson = {
   solverUnits: "m-N-s-Pa" | "mm-N-s-MPa";
-  renderCoordinateSpace?: string;
+  renderCoordinateSpace?: "solver" | "display_model";
 };
 
 export type MeshProvenanceJson = {
@@ -116,7 +116,7 @@ export type PrescribedDisplacementBoundaryConditionJson = {
 
 export type DisplacementComponent = "x" | "y" | "z";
 
-export type LoadJson = NodalForceLoadJson | SurfaceForceLoadJson | PressureLoadJson;
+export type LoadJson = NodalForceLoadJson | SurfaceForceLoadJson | PressureLoadJson | BodyGravityLoadJson;
 
 export type NodalForceLoadJson = {
   name: string;
@@ -140,7 +140,13 @@ export type PressureLoadJson = {
   direction?: [number, number, number];
 };
 
-export type StepJson = StaticLinearStepJson | DynamicStepJson;
+export type BodyGravityLoadJson = {
+  name: string;
+  type: "bodyGravity";
+  acceleration: [number, number, number];
+};
+
+export type StepJson = StaticLinearStepJson | DynamicLinearStepJson;
 
 export type StaticLinearStepJson = {
   name: string;
@@ -151,7 +157,7 @@ export type StaticLinearStepJson = {
 
 export type DynamicLoadProfileJson = "step" | "ramp" | "quasi_static" | "sinusoidal";
 
-export type DynamicStepJson = {
+export type DynamicLinearStepJson = {
   name: string;
   type: "dynamicLinear";
   boundaryConditions: string[];
@@ -165,6 +171,8 @@ export type DynamicStepJson = {
   rayleighAlpha?: number;
   rayleighBeta?: number;
 };
+
+export type DynamicStepJson = DynamicLinearStepJson;
 
 export type ResultSampleLocation = "node" | "element" | "integration_point";
 

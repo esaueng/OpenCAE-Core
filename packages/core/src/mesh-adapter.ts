@@ -9,7 +9,7 @@ import {
   type MeshProvenanceJson,
   type NodeSetJson,
   type OpenCAEModelJson,
-  type StaticLinearStepJson,
+  type StepJson,
   type SurfaceSetJson
 } from "./model-json";
 import {
@@ -37,7 +37,7 @@ export type VolumeMeshToModelInput = {
   surfaceSets?: VolumeMeshSurfaceSetInput[];
   boundaryConditions?: BoundaryConditionJson[];
   loads?: LoadJson[];
-  steps?: StaticLinearStepJson[];
+  steps?: StepJson[];
   coordinateSystem?: CoordinateSystemJson;
   meshProvenance?: MeshProvenanceJson;
   sourceFaces?: {

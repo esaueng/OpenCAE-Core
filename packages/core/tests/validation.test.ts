@@ -1,4 +1,5 @@
 import { describe, expect, test } from "vitest";
+import type { BodyGravityLoadJson, DynamicLinearStepJson } from "../src/model-json";
 import { validateModelJson } from "../src/validation";
 import { createSingleTetModel, createTwoTetModel } from "./fixtures";
 
@@ -156,6 +157,18 @@ describe("validateModelJson", () => {
   });
 
   test("accepts v0.2.0 models with surface loads and dynamic steps", () => {
+    const dynamicStep: DynamicLinearStepJson = {
+      name: "transient",
+      type: "dynamicLinear",
+      boundaryConditions: ["fixedSupport"],
+      loads: ["surfacePush", "pressurePush"],
+      startTime: 0,
+      endTime: 0.1,
+      timeStep: 0.01,
+      outputInterval: 0.02,
+      loadProfile: "quasi_static",
+      dampingRatio: 0.02
+    };
     const model = {
       ...createSingleTetModel(),
       schemaVersion: "0.2.0",
@@ -195,22 +208,11 @@ describe("validateModelJson", () => {
       ],
       steps: [
         ...createSingleTetModel().steps,
-        {
-          name: "transient",
-          type: "dynamicLinear",
-          boundaryConditions: ["fixedSupport"],
-          loads: ["surfacePush", "pressurePush"],
-          startTime: 0,
-          endTime: 0.1,
-          timeStep: 0.01,
-          outputInterval: 0.02,
-          loadProfile: "quasi_static",
-          dampingRatio: 0.02
-        }
+        dynamicStep
       ],
       coordinateSystem: {
         solverUnits: "m-N-s-Pa",
-        renderCoordinateSpace: "cad"
+        renderCoordinateSpace: "display_model"
       },
       meshProvenance: {
         kind: "opencae_core_fea",
@@ -218,6 +220,29 @@ describe("validateModelJson", () => {
         resultSource: "computed",
         meshSource: "actual_volume_mesh"
       }
+    };
+
+    expect(validateModelJson(model).ok).toBe(true);
+  });
+
+  test("accepts a bodyGravity load referenced by a static step", () => {
+    const gravity: BodyGravityLoadJson = {
+      name: "gravity",
+      type: "bodyGravity",
+      acceleration: [0, 0, -9.81]
+    };
+    const model = {
+      ...createSingleTetModel(),
+      schemaVersion: "0.2.0",
+      loads: [gravity],
+      steps: [
+        {
+          name: "gravityStep",
+          type: "staticLinear",
+          boundaryConditions: ["fixedSupport"],
+          loads: ["gravity"]
+        }
+      ]
     };
 
     expect(validateModelJson(model).ok).toBe(true);
@@ -281,6 +306,66 @@ describe("validateModelJson", () => {
     expect(codes).toContain("missing-surface-set-reference");
   });
 
+  test("rejects surface facet node indices outside the mesh node range", () => {
+    const model = {
+      ...createSingleTetModel(),
+      schemaVersion: "0.2.0",
+      surfaceFacets: [
+        {
+          id: 1,
+          element: 0,
+          elementFace: 0,
+          nodes: [0, 1, 99]
+        }
+      ]
+    };
+
+    const codes = validateModelJson(model).errors.map((issue) => issue.code);
+
+    expect(codes).toContain("surface-facet-node-out-of-range");
+  });
+
+  test("rejects invalid dynamic step time ranges and intervals", () => {
+    const model = {
+      ...createSingleTetModel(),
+      schemaVersion: "0.2.0",
+      steps: [
+        {
+          name: "badTransient",
+          type: "dynamicLinear",
+          boundaryConditions: ["fixedSupport"],
+          loads: ["tipLoad"],
+          startTime: 1,
+          endTime: 1,
+          timeStep: 0,
+          outputInterval: -1,
+          loadProfile: "step"
+        }
+      ]
+    };
+
+    const codes = validateModelJson(model).errors.map((issue) => issue.code);
+
+    expect(codes).toContain("invalid-dynamic-time-range");
+    expect(codes).toContain("invalid-dynamic-time-step");
+    expect(codes).toContain("invalid-dynamic-output-interval");
+  });
+
+  test("rejects invalid coordinate render spaces", () => {
+    const model = {
+      ...createSingleTetModel(),
+      schemaVersion: "0.2.0",
+      coordinateSystem: {
+        solverUnits: "m-N-s-Pa",
+        renderCoordinateSpace: "cad"
+      }
+    };
+
+    const codes = validateModelJson(model).errors.map((issue) => issue.code);
+
+    expect(codes).toContain("invalid-render-coordinate-space");
+  });
+
   test("rejects disconnected bodies without mesh connection metadata", () => {
     const model = {
       ...createSingleTetModel(),
@@ -310,7 +395,7 @@ describe("validateModelJson", () => {
     expect(codes).toContain("disconnected-bodies-without-connections");
   });
 
-  test("accepts Tet10 schema but rejects unsupported element types", () => {
+  test("accepts valid Tet10 connectivity but rejects invalid Tet10 connectivity length", () => {
     const tet10 = {
       ...createSingleTetModel(),
       schemaVersion: "0.2.0",
@@ -335,6 +420,18 @@ describe("validateModelJson", () => {
       ]
     };
 
+    const invalidTet10 = {
+      ...tet10,
+      elementBlocks: [
+        {
+          name: "tet10",
+          type: "Tet10",
+          material: "steel",
+          connectivity: [0, 1, 2, 3, 4, 5, 6, 7, 8]
+        }
+      ]
+    };
+
     const unsupported = {
       ...createSingleTetModel(),
       schemaVersion: "0.2.0",
@@ -349,6 +446,9 @@ describe("validateModelJson", () => {
     };
 
     expect(validateModelJson(tet10).ok).toBe(true);
+    expect(validateModelJson(invalidTet10).errors.map((issue) => issue.code)).toContain(
+      "invalid-connectivity-length"
+    );
     expect(validateModelJson(unsupported).errors.map((issue) => issue.code)).toContain(
       "unsupported-element-type"
     );

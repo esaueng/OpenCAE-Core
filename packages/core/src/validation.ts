@@ -469,7 +469,11 @@ function validateLoads(
       validateOptionalVector3(load.direction, `${path}.direction`, "invalid-pressure-direction", errors);
       return;
     }
-    errors.push(issue("invalid-load-type", "Load type must be nodalForce, surfaceForce, or pressure.", `${path}.type`));
+    if (load.type === "bodyGravity") {
+      validateVector3(load.acceleration, `${path}.acceleration`, "invalid-gravity-acceleration", "Body gravity acceleration must contain three finite numbers.", errors);
+      return;
+    }
+    errors.push(issue("invalid-load-type", "Load type must be nodalForce, surfaceForce, pressure, or bodyGravity.", `${path}.type`));
   });
   return names;
 }
@@ -525,8 +529,12 @@ function validateCoordinateSystem(coordinateSystem: unknown, errors: ValidationI
   if (coordinateSystem.solverUnits !== "m-N-s-Pa" && coordinateSystem.solverUnits !== "mm-N-s-MPa") {
     errors.push(issue("invalid-solver-units", "solverUnits must be m-N-s-Pa or mm-N-s-MPa.", "$.coordinateSystem.solverUnits"));
   }
-  if (coordinateSystem.renderCoordinateSpace !== undefined && typeof coordinateSystem.renderCoordinateSpace !== "string") {
-    errors.push(issue("invalid-render-coordinate-space", "renderCoordinateSpace must be a string.", "$.coordinateSystem.renderCoordinateSpace"));
+  if (
+    coordinateSystem.renderCoordinateSpace !== undefined &&
+    coordinateSystem.renderCoordinateSpace !== "solver" &&
+    coordinateSystem.renderCoordinateSpace !== "display_model"
+  ) {
+    errors.push(issue("invalid-render-coordinate-space", "renderCoordinateSpace must be solver or display_model.", "$.coordinateSystem.renderCoordinateSpace"));
   }
 }
 
