@@ -353,7 +353,7 @@ function finishSolve(
       kind: "opencae_core_fea",
       solver: "opencae-core-sparse-tet",
       resultSource: "computed",
-      meshSource: model.meshProvenance?.meshSource === "actual_volume_mesh" ? "actual_volume_mesh" : "structured_block"
+      meshSource: model.meshProvenance?.meshSource === "actual_volume_mesh" ? "actual_volume_mesh" : "structured_block_core"
     }
   };
 

@@ -88,6 +88,12 @@ Core mesh validation covers:
 
 Complex geometry must provide an actual connected volume mesh for Core solving. Display geometry, bounding boxes, or visual-only surface data are not enough.
 
+## Result Surface Fields
+
+Core results include a solver surface mesh derived from the solved volume mesh. `surfaceMesh.nodeMap` is ordered one-to-one with `surfaceMesh.nodes` and maps each surface node back to its volume node id. Any node field with `surfaceMeshRef` must have exactly one value per solver surface node.
+
+Static and dynamic Core results expose surface displacement magnitudes and recovered nodal von Mises stress fields for visualization. The recovered stress field is tagged as `nodal_recovered_surface_average`; it is not used as the engineering max. `summary.maxStress` and safety factor calculations stay tied to raw element von Mises values.
+
 ## Bracket Regression Fixture
 
 The validation suite includes a small bracket-like Tet mesh with:

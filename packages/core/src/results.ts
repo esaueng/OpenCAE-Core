@@ -12,6 +12,7 @@ export type SolverSurfaceMesh = {
   triangles: [number, number, number][];
   coordinateSpace: "solver" | "display_model";
   source: "opencae_core_volume_mesh";
+  nodeMap?: number[];
 };
 
 export type CoreResultField = {
@@ -24,8 +25,11 @@ export type CoreResultField = {
   units: string;
   samples?: unknown[];
   meshRef?: string;
+  surfaceMeshRef?: string;
   frameIndex?: number;
   timeSeconds?: number;
+  visualizationSource?: string;
+  engineeringSource?: string;
 };
 
 export type CoreTransientSummary = {
@@ -98,6 +102,7 @@ export function solverSurfaceMeshFromModel(
   const facets = collectSurfaceFacets(model);
   const surfaceNodeByVolumeNode = new Map<number, number>();
   const nodes: [number, number, number][] = [];
+  const nodeMap: number[] = [];
   const triangles: [number, number, number][] = [];
 
   for (const facet of facets) {
@@ -107,6 +112,7 @@ export function solverSurfaceMeshFromModel(
       if (existing !== undefined) return existing;
       const surfaceNode = nodes.length;
       surfaceNodeByVolumeNode.set(volumeNode, surfaceNode);
+      nodeMap.push(volumeNode);
       nodes.push([
         coordinates[volumeNode * 3] ?? 0,
         coordinates[volumeNode * 3 + 1] ?? 0,
@@ -122,7 +128,8 @@ export function solverSurfaceMeshFromModel(
     nodes,
     triangles,
     coordinateSpace: model.coordinateSystem?.renderCoordinateSpace ?? "solver",
-    source: "opencae_core_volume_mesh"
+    source: "opencae_core_volume_mesh",
+    nodeMap
   };
 }
 
@@ -147,7 +154,7 @@ export function validateCoreResult(result: CoreSolveResult): CoreResultValidatio
   if (!Array.isArray(result.fields) || result.fields.length === 0) {
     errors.push(issue("empty-fields", "Core result must contain at least one field.", "fields"));
   } else {
-    result.fields.forEach((field, index) => validateField(field, index, errors));
+    result.fields.forEach((field, index) => validateField(field, index, result.surfaceMesh, errors));
   }
 
   if (result.surfaceMesh) validateSurfaceMesh(result.surfaceMesh, errors);
@@ -224,7 +231,12 @@ function validateSummary(summary: CoreSolveSummary, errors: CoreResultValidation
   }
 }
 
-function validateField(field: CoreResultField, index: number, errors: CoreResultValidationIssue[]): void {
+function validateField(
+  field: CoreResultField,
+  index: number,
+  surfaceMesh: SolverSurfaceMesh | undefined,
+  errors: CoreResultValidationIssue[]
+): void {
   const path = `fields[${index}]`;
   if (!Array.isArray(field.values) || field.values.length === 0) {
     errors.push(issue("empty-field-values", "Core result field values must be non-empty.", `${path}.values`));
@@ -250,6 +262,13 @@ function validateField(field: CoreResultField, index: number, errors: CoreResult
   if (requiresFrameMetadata(field) && (!Number.isInteger(field.frameIndex) || !Number.isFinite(field.timeSeconds))) {
     errors.push(issue("missing-frame-metadata", "Dynamic Core result fields must include frameIndex and timeSeconds.", path));
   }
+  if (field.surfaceMeshRef !== undefined) {
+    if (!surfaceMesh || field.surfaceMeshRef !== surfaceMesh.id) {
+      errors.push(issue("missing-surface-mesh-reference", "Core result field surfaceMeshRef must reference the result surface mesh.", `${path}.surfaceMeshRef`));
+    } else if (field.location === "node" && field.values.length !== surfaceMesh.nodes.length) {
+      errors.push(issue("surface-field-length-mismatch", "Surface mesh node fields must contain exactly one value per surface node.", `${path}.values`));
+    }
+  }
 }
 
 function validateSurfaceMesh(surfaceMesh: SolverSurfaceMesh, errors: CoreResultValidationIssue[]): void {
@@ -273,6 +292,16 @@ function validateSurfaceMesh(surfaceMesh: SolverSurfaceMesh, errors: CoreResultV
       }
     }
   });
+  if (surfaceMesh.nodeMap !== undefined) {
+    if (surfaceMesh.nodeMap.length !== surfaceMesh.nodes.length) {
+      errors.push(issue("invalid-surface-node-map", "Surface mesh nodeMap must align one-to-one with surface nodes.", "surfaceMesh.nodeMap"));
+    }
+    surfaceMesh.nodeMap.forEach((volumeNode, index) => {
+      if (!Number.isInteger(volumeNode) || volumeNode < 0) {
+        errors.push(issue("invalid-surface-node-map", "Surface mesh nodeMap entries must be non-negative node ids.", `surfaceMesh.nodeMap[${index}]`));
+      }
+    });
+  }
 }
 
 function requiresFrameMetadata(field: CoreResultField): boolean {

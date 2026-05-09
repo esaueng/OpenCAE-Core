@@ -26,7 +26,9 @@ export { computeLinearElasticDMatrix } from "./material";
 export {
   computeTet4BMatrix,
   computeTet4ElementStiffness,
-  computeVonMisesStress
+  computeVonMisesStress,
+  recoverNodalVonMisesFromElements,
+  smoothNodalScalarField
 } from "./element";
 export { solveDenseLinearSystem } from "./linear-solve";
 export {

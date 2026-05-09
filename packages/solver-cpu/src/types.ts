@@ -58,7 +58,7 @@ export type StaticLinearTet4CpuResult = {
     kind: "opencae_core_fea" | "local_estimate";
     solver: "opencae-core-sparse-tet" | "opencae-core-preview-sdof";
     resultSource: "computed" | "computed_preview";
-    meshSource: "actual_volume_mesh" | "structured_block";
+    meshSource: "actual_volume_mesh" | "structured_block_core" | "structured_block";
   };
 };
 

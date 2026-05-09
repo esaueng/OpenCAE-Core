@@ -26,7 +26,9 @@ For a fused single-solid fixture, `connectedComponents(mesh).componentCount` mus
 
 Surface force loads are distributed over selected facets by area, then to each facet node. Pressure loads use `pressure * facet area` along an explicit direction or the facet normal. The assembled nodal forces must balance reactions within solver tolerance.
 
-Accurate result visualization should use the solver surface mesh returned by Core metadata. Results include `meshRef`, `surfaceMeshRef`, `coordinateSpace`, and `sampleLocation` so downstream viewers can render and deform the solved topology instead of projecting values onto unrelated display primitives.
+Accurate result visualization should use the solver surface mesh returned by Core metadata. `surfaceMesh.nodeMap` maps each surface node back to the volume mesh node id. Surface visualization fields use `surfaceMeshRef` and must contain one value per surface node, so downstream viewers can render and deform the solved topology instead of projecting values onto unrelated display primitives.
+
+Engineering values remain separate from visualization values. `summary.maxStress` is based on raw element von Mises stress, while the surface stress field is a recovered nodal field marked with `visualizationSource: "nodal_recovered_surface_average"` and `engineeringSource: "element_von_mises"`.
 
 ## Downstream Adapter Contract
 

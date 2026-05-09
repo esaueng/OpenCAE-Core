@@ -85,10 +85,16 @@ export type CoordinateSystemJson = {
 };
 
 export type MeshProvenanceJson = {
-  kind: "opencae_core_fea" | "local_estimate";
-  solver: "opencae-core-sparse-tet" | "opencae-core-preview-sdof" | string;
-  resultSource: "computed" | "computed_preview";
-  meshSource?: "actual_volume_mesh" | "structured_block" | "display_bounds_proxy" | string;
+  meshSource:
+    | "actual_volume_mesh"
+    | "structured_block_core"
+    | "uploaded_volume_mesh"
+    | "gmsh_volume_mesh"
+    | "structured_block"
+    | "display_bounds_proxy";
+  solver?: string;
+  resultSource?: string;
+  kind?: string;
 };
 
 export type MeshConnectionJson = {

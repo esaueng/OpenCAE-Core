@@ -14,6 +14,7 @@ describe("Core result structures", () => {
     expect(surfaceMesh.source).toBe("opencae_core_volume_mesh");
     expect(surfaceMesh.coordinateSpace).toBe("solver");
     expect(surfaceMesh.nodes).toHaveLength(4);
+    expect(surfaceMesh.nodeMap).toEqual([1, 2, 3, 0]);
     expect(surfaceMesh.triangles).toHaveLength(4);
     for (const triangle of surfaceMesh.triangles) {
       expect(triangle.every((node) => node >= 0 && node < surfaceMesh.nodes.length)).toBe(true);
@@ -42,11 +43,11 @@ describe("Core result structures", () => {
           id: "displacement",
           type: "displacement",
           location: "node",
-          values: [0, 0.1, 0.2],
+          values: [0, 0.1, 0.2, 0.3],
           min: 0,
-          max: 0.2,
+          max: 0.3,
           units: "m",
-          meshRef: "solver-surface"
+          surfaceMeshRef: "solver-surface"
         }
       ],
       surfaceMesh: solverSurfaceMeshFromModel(createSingleTetModel()),
@@ -121,6 +122,53 @@ describe("Core result structures", () => {
         "invalid-surface-triangle-node"
       ])
     );
+  });
+
+  test("rejects surface mesh fields that do not align one value per surface node", () => {
+    const surfaceMesh = solverSurfaceMeshFromModel(createSingleTetModel());
+    const result: CoreSolveResult = {
+      summary: {
+        maxStress: 10,
+        maxStressUnits: "Pa",
+        maxDisplacement: 0.1,
+        maxDisplacementUnits: "m",
+        reactionForce: 5,
+        reactionForceUnits: "N",
+        provenance: {
+          kind: "opencae_core_fea",
+          solver: "opencae-core-sparse-tet",
+          resultSource: "computed",
+          meshSource: "actual_volume_mesh",
+          units: "m-N-s-Pa"
+        }
+      },
+      fields: [
+        {
+          id: "surface-stress",
+          type: "stress",
+          location: "node",
+          values: [1, 2, 3],
+          min: 1,
+          max: 3,
+          units: "Pa",
+          surfaceMeshRef: surfaceMesh.id
+        }
+      ],
+      surfaceMesh,
+      diagnostics: [],
+      provenance: {
+        kind: "opencae_core_fea",
+        solver: "opencae-core-sparse-tet",
+        resultSource: "computed",
+        meshSource: "actual_volume_mesh",
+        units: "m-N-s-Pa"
+      }
+    };
+
+    const report = validateCoreResult(result);
+
+    expect(report.ok).toBe(false);
+    expect(report.errors.map((error) => error.code)).toContain("surface-field-length-mismatch");
   });
 
   test("rejects Core results missing app-facing summary units and summary provenance", () => {

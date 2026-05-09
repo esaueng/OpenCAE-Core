@@ -51,6 +51,15 @@ describe("public Core solver APIs", () => {
     expect(result.result.provenance.solver).toBe("opencae-core-sparse-tet");
     expect(result.result.provenance.kind).toBe("opencae_core_fea");
     expect(result.result.fields.map((field) => field.type)).toEqual(expect.arrayContaining(["displacement", "stress"]));
+    const surfaceStress = result.result.fields.find((field) => field.id === "stress-von-mises-surface");
+    const engineeringStress = result.result.fields.find((field) => field.id === "stress-von-mises-element");
+    expect(surfaceStress?.location).toBe("node");
+    expect(surfaceStress?.surfaceMeshRef).toBe(result.result.surfaceMesh?.id);
+    expect(surfaceStress?.visualizationSource).toBe("nodal_recovered_surface_average");
+    expect(surfaceStress?.engineeringSource).toBe("element_von_mises");
+    expect(surfaceStress?.values).toHaveLength(result.result.surfaceMesh?.nodes.length ?? -1);
+    expect(engineeringStress?.location).toBe("element");
+    expect(result.result.summary.maxStress).toBe(engineeringStress?.max);
     expect(JSON.stringify(result.result)).not.toContain("local_estimate");
     expect(JSON.stringify(result.result)).not.toContain("computed_preview");
     expect(validateCoreResult(result.result).ok).toBe(true);
@@ -89,6 +98,24 @@ describe("public Core solver APIs", () => {
     expect(result.ok ? undefined : result.error.message).toBe(
       "OpenCAE Core requires an actual volume mesh for this solve. No estimate fallback was used."
     );
+  });
+
+  test("production APIs reject preview or local-estimate provenance inputs", () => {
+    const previewModel: OpenCAEModelJson = {
+      ...singleTetStaticFixture,
+      schemaVersion: "0.2.0",
+      meshProvenance: {
+        kind: "local_estimate",
+        solver: "opencae-core-preview-sdof",
+        resultSource: "computed_preview",
+        meshSource: "structured_block"
+      }
+    };
+
+    const result = solveCoreStatic(previewModel);
+
+    expect(result.ok).toBe(false);
+    expect(result.ok ? undefined : result.error.code).toBe("preview-provenance-not-allowed");
   });
 
   test("production dynamic API requires dynamicLinear steps", () => {

@@ -112,5 +112,18 @@ function actualMeshError(
       }
     };
   }
+  if (
+    model.meshProvenance?.kind === "local_estimate" ||
+    model.meshProvenance?.resultSource === "computed_preview" ||
+    model.meshProvenance?.solver === "opencae-core-preview-sdof"
+  ) {
+    return {
+      ok: false,
+      error: {
+        code: "preview-provenance-not-allowed",
+        message: "Production OpenCAE Core solves reject preview and local-estimate provenance. No preview fallback was used."
+      }
+    };
+  }
   return undefined;
 }

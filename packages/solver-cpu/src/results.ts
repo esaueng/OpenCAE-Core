@@ -4,8 +4,10 @@ import {
   type CoreResultField,
   type CoreSolveProvenance,
   type CoreSolveResult,
-  type NormalizedOpenCAEModel
+  type NormalizedOpenCAEModel,
+  type SolverSurfaceMesh
 } from "@opencae/core";
+import { recoverNodalVonMisesFromElements } from "./element";
 import type { DynamicTet4CpuResult, DynamicTet4CpuDiagnostics, StaticLinearTet4CpuResult, CpuSolverDiagnostics } from "./types";
 
 export function staticCoreResultFromSolve(
@@ -18,22 +20,39 @@ export function staticCoreResultFromSolve(
   const provenance = coreProvenance(model, "opencae-core-sparse-tet");
   const maxDisplacement = maxNodeVectorNorm(result.displacement);
   const reactionForce = vectorSumMagnitude(result.reactionForce);
+  const surfaceDisplacement = surfaceVectorMagnitudes(surfaceMesh, result.displacement);
+  const surfaceVonMises = surfaceNodeScalars(
+    surfaceMesh,
+    recoverNodalVonMisesFromElements(model, result.vonMises, { surfaceOnly: true })
+  );
   const fields: CoreResultField[] = [
     createCoreResultField({
-      id: "displacement",
+      id: "displacement-magnitude-surface",
       type: "displacement",
       location: "node",
-      values: result.displacement,
+      values: surfaceDisplacement,
       units: displacementUnits(model),
-      meshRef: surfaceMesh.id
+      surfaceMeshRef: surfaceMesh.id,
+      visualizationSource: "surface_displacement_magnitude"
     }),
     createCoreResultField({
-      id: "stress-von-mises",
+      id: "stress-von-mises-surface",
+      type: "stress",
+      location: "node",
+      values: surfaceVonMises,
+      units: stressUnits(model),
+      surfaceMeshRef: surfaceMesh.id,
+      visualizationSource: "nodal_recovered_surface_average",
+      engineeringSource: "element_von_mises"
+    }),
+    createCoreResultField({
+      id: "stress-von-mises-element",
       type: "stress",
       location: "element",
       values: result.vonMises,
       units: stressUnits(model),
-      meshRef: surfaceMesh.id
+      meshRef: "solver-volume",
+      engineeringSource: "element_von_mises"
     })
   ];
   if (hasYieldStrength(model)) {
@@ -44,7 +63,8 @@ export function staticCoreResultFromSolve(
         location: "element",
         values: safetyFactor,
         units: "ratio",
-        meshRef: surfaceMesh.id
+        meshRef: "solver-volume",
+        engineeringSource: "element_von_mises"
       })
     );
   }
@@ -86,46 +106,69 @@ export function dynamicCoreResultFromSolve(
   const provenance = coreProvenance(model, "opencae-core-mdof-tet");
   const fields: CoreResultField[] = [];
   for (const frame of result.frames) {
+    const surfaceDisplacement = surfaceVectorMagnitudes(surfaceMesh, frame.displacement.values);
+    const surfaceVelocity = surfaceVectorMagnitudes(surfaceMesh, frame.velocity.values);
+    const surfaceAcceleration = surfaceVectorMagnitudes(surfaceMesh, frame.acceleration.values);
+    const surfaceVonMises = surfaceNodeScalars(
+      surfaceMesh,
+      recoverNodalVonMisesFromElements(model, frame.vonMises.values, { surfaceOnly: true })
+    );
     fields.push(
       createCoreResultField({
         id: `frame-${frame.frameIndex}-displacement`,
         type: "displacement",
         location: "node",
-        values: frame.displacement.values,
+        values: surfaceDisplacement,
         units: displacementUnits(model),
-        meshRef: surfaceMesh.id,
+        surfaceMeshRef: surfaceMesh.id,
         frameIndex: frame.frameIndex,
-        timeSeconds: frame.timeSeconds
+        timeSeconds: frame.timeSeconds,
+        visualizationSource: "surface_displacement_magnitude"
       }),
       createCoreResultField({
         id: `frame-${frame.frameIndex}-velocity`,
         type: "velocity",
         location: "node",
-        values: frame.velocity.values,
+        values: surfaceVelocity,
         units: `${displacementUnits(model)}/s`,
-        meshRef: surfaceMesh.id,
+        surfaceMeshRef: surfaceMesh.id,
         frameIndex: frame.frameIndex,
-        timeSeconds: frame.timeSeconds
+        timeSeconds: frame.timeSeconds,
+        visualizationSource: "surface_velocity_magnitude"
       }),
       createCoreResultField({
         id: `frame-${frame.frameIndex}-acceleration`,
         type: "acceleration",
         location: "node",
-        values: frame.acceleration.values,
+        values: surfaceAcceleration,
         units: `${displacementUnits(model)}/s^2`,
-        meshRef: surfaceMesh.id,
+        surfaceMeshRef: surfaceMesh.id,
         frameIndex: frame.frameIndex,
-        timeSeconds: frame.timeSeconds
+        timeSeconds: frame.timeSeconds,
+        visualizationSource: "surface_acceleration_magnitude"
       }),
       createCoreResultField({
-        id: `frame-${frame.frameIndex}-stress-von-mises`,
+        id: `frame-${frame.frameIndex}-stress-von-mises-surface`,
+        type: "stress",
+        location: "node",
+        values: surfaceVonMises,
+        units: stressUnits(model),
+        surfaceMeshRef: surfaceMesh.id,
+        frameIndex: frame.frameIndex,
+        timeSeconds: frame.timeSeconds,
+        visualizationSource: "nodal_recovered_surface_average",
+        engineeringSource: "element_von_mises"
+      }),
+      createCoreResultField({
+        id: `frame-${frame.frameIndex}-stress-von-mises-element`,
         type: "stress",
         location: "element",
         values: frame.vonMises.values,
         units: stressUnits(model),
-        meshRef: surfaceMesh.id,
+        meshRef: "solver-volume",
         frameIndex: frame.frameIndex,
-        timeSeconds: frame.timeSeconds
+        timeSeconds: frame.timeSeconds,
+        engineeringSource: "element_von_mises"
       })
     );
     if (hasYieldStrength(model)) {
@@ -136,9 +179,10 @@ export function dynamicCoreResultFromSolve(
           location: "element",
           values: frame.safety_factor.values,
           units: "ratio",
-          meshRef: surfaceMesh.id,
+          meshRef: "solver-volume",
           frameIndex: frame.frameIndex,
-          timeSeconds: frame.timeSeconds
+          timeSeconds: frame.timeSeconds,
+          engineeringSource: "element_von_mises"
         })
       );
     }
@@ -198,11 +242,15 @@ function coreProvenance(
   model: NormalizedOpenCAEModel,
   solver: CoreSolveProvenance["solver"]
 ): CoreSolveProvenance {
+  const meshSource = model.meshProvenance?.meshSource;
   return {
     kind: "opencae_core_fea",
     solver,
     resultSource: "computed",
-    meshSource: model.meshProvenance?.meshSource === "structured_block" ? "structured_block_core" : "actual_volume_mesh",
+    meshSource:
+      meshSource === "structured_block" || meshSource === "structured_block_core"
+        ? "structured_block_core"
+        : "actual_volume_mesh",
     units: model.coordinateSystem.solverUnits
   };
 }
@@ -234,6 +282,17 @@ function maxNodeVectorNorm(values: Float64Array): number {
     max = Math.max(max, Math.hypot(values[node * 3], values[node * 3 + 1], values[node * 3 + 2]));
   }
   return max;
+}
+
+function surfaceVectorMagnitudes(surfaceMesh: SolverSurfaceMesh, vector: Float64Array): number[] {
+  return (surfaceMesh.nodeMap ?? []).map((volumeNode) => {
+    const offset = volumeNode * 3;
+    return Math.hypot(vector[offset] ?? 0, vector[offset + 1] ?? 0, vector[offset + 2] ?? 0);
+  });
+}
+
+function surfaceNodeScalars(surfaceMesh: SolverSurfaceMesh, nodalValues: Float64Array): number[] {
+  return (surfaceMesh.nodeMap ?? []).map((volumeNode) => nodalValues[volumeNode] ?? 0);
 }
 
 function maxAbs(values: Float64Array): number {
