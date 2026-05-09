@@ -24,7 +24,18 @@ describe("Core result structures", () => {
     const result: CoreSolveResult = {
       summary: {
         maxStress: 10,
-        maxDisplacement: 0.1
+        maxStressUnits: "MPa",
+        maxDisplacement: 0.1,
+        maxDisplacementUnits: "mm",
+        reactionForce: 5,
+        reactionForceUnits: "N",
+        provenance: {
+          kind: "opencae_core_fea",
+          solver: "opencae-core-sparse-tet",
+          resultSource: "computed",
+          meshSource: "actual_volume_mesh",
+          units: "mm-N-s-MPa"
+        }
       },
       fields: [
         {
@@ -102,12 +113,49 @@ describe("Core result structures", () => {
     expect(report.errors.map((error) => error.code)).toEqual(
       expect.arrayContaining([
         "non-finite-summary",
+        "missing-summary-units",
         "empty-field-values",
         "invalid-field-range",
         "non-finite-field-value",
         "missing-frame-metadata",
         "invalid-surface-triangle-node"
       ])
+    );
+  });
+
+  test("rejects Core results missing app-facing summary units and summary provenance", () => {
+    const result: CoreSolveResult = {
+      summary: {
+        maxStress: 10,
+        maxDisplacement: 0.1,
+        reactionForce: 5
+      } as CoreSolveResult["summary"],
+      fields: [
+        {
+          id: "displacement",
+          type: "displacement",
+          location: "node",
+          values: [0, 0.1, 0.2],
+          min: 0,
+          max: 0.2,
+          units: "mm"
+        }
+      ],
+      diagnostics: [],
+      provenance: {
+        kind: "opencae_core_fea",
+        solver: "opencae-core-sparse-tet",
+        resultSource: "computed",
+        meshSource: "actual_volume_mesh",
+        units: "mm-N-s-MPa"
+      }
+    };
+
+    const report = validateCoreResult(result);
+
+    expect(report.ok).toBe(false);
+    expect(report.errors.map((error) => error.code)).toEqual(
+      expect.arrayContaining(["missing-summary-units", "missing-summary-provenance"])
     );
   });
 });

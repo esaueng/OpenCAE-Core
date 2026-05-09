@@ -144,7 +144,7 @@ export function solveDynamicMdofTet4Cpu(
     }
   }
 
-  const peakDisplacement = Math.max(...frames.map((frame) => maxAbs(frame.displacement.values)), 0);
+  const peakDisplacement = Math.max(...frames.map((frame) => maxNodeVectorNorm(frame.displacement.values)), 0);
   const peakVelocity = Math.max(...frames.map((frame) => maxAbs(frame.velocity.values)), 0);
   const peakAcceleration = Math.max(...frames.map((frame) => maxAbs(frame.acceleration.values)), 0);
   const peakStress = Math.max(...frames.map((frame) => maxAbs(frame.stress.values)), 0);
@@ -448,6 +448,14 @@ function expandFreeVector(
   for (const [dof, value] of constraints ?? []) full[dof] = value;
   for (let i = 0; i < free.length; i += 1) full[free[i]] = reduced[i];
   return full;
+}
+
+function maxNodeVectorNorm(values: Float64Array): number {
+  let max = 0;
+  for (let node = 0; node < values.length / 3; node += 1) {
+    max = Math.max(max, Math.hypot(values[node * 3] ?? 0, values[node * 3 + 1] ?? 0, values[node * 3 + 2] ?? 0));
+  }
+  return max;
 }
 
 function estimateEquivalentStiffness(system: ReducedSystem): number {

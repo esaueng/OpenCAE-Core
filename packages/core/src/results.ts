@@ -22,6 +22,7 @@ export type CoreResultField = {
   min: number;
   max: number;
   units: string;
+  samples?: unknown[];
   meshRef?: string;
   frameIndex?: number;
   timeSeconds?: number;
@@ -43,9 +44,13 @@ export type CoreTransientSummary = {
 
 export type CoreSolveSummary = {
   maxStress: number;
+  maxStressUnits: string;
   maxDisplacement: number;
+  maxDisplacementUnits: string;
   safetyFactor?: number;
-  reactionForce?: number;
+  reactionForce: number;
+  reactionForceUnits: string;
+  provenance: CoreSolveProvenance;
   transient?: CoreTransientSummary;
 };
 
@@ -63,6 +68,10 @@ export type CoreSolveResult = {
   surfaceMesh?: SolverSurfaceMesh;
   diagnostics: unknown[];
   provenance: CoreSolveProvenance;
+  artifacts?: {
+    rawUnits?: "m-N-s-Pa" | "mm-N-s-MPa";
+    [key: string]: unknown;
+  };
 };
 
 export type CoreResultValidationIssue = {
@@ -190,14 +199,28 @@ function validateSummary(summary: CoreSolveSummary, errors: CoreResultValidation
   if (!Number.isFinite(summary.maxStress)) {
     errors.push(issue("non-finite-summary", "Summary maxStress must be finite.", "summary.maxStress"));
   }
+  if (typeof summary.maxStressUnits !== "string" || summary.maxStressUnits.length === 0) {
+    errors.push(issue("missing-summary-units", "Summary maxStressUnits must be present.", "summary.maxStressUnits"));
+  }
   if (!Number.isFinite(summary.maxDisplacement)) {
     errors.push(issue("non-finite-summary", "Summary maxDisplacement must be finite.", "summary.maxDisplacement"));
+  }
+  if (typeof summary.maxDisplacementUnits !== "string" || summary.maxDisplacementUnits.length === 0) {
+    errors.push(issue("missing-summary-units", "Summary maxDisplacementUnits must be present.", "summary.maxDisplacementUnits"));
   }
   if (summary.safetyFactor !== undefined && !Number.isFinite(summary.safetyFactor)) {
     errors.push(issue("non-finite-summary", "Summary safetyFactor must be finite when present.", "summary.safetyFactor"));
   }
-  if (summary.reactionForce !== undefined && !Number.isFinite(summary.reactionForce)) {
-    errors.push(issue("non-finite-summary", "Summary reactionForce must be finite when present.", "summary.reactionForce"));
+  if (!Number.isFinite(summary.reactionForce)) {
+    errors.push(issue("non-finite-summary", "Summary reactionForce must be finite.", "summary.reactionForce"));
+  }
+  if (typeof summary.reactionForceUnits !== "string" || summary.reactionForceUnits.length === 0) {
+    errors.push(issue("missing-summary-units", "Summary reactionForceUnits must be present.", "summary.reactionForceUnits"));
+  }
+  if (!summary.provenance) {
+    errors.push(issue("missing-summary-provenance", "Summary provenance must be present.", "summary.provenance"));
+  } else {
+    validateProvenance(summary.provenance, errors);
   }
 }
 
@@ -213,6 +236,9 @@ function validateField(field: CoreResultField, index: number, errors: CoreResult
   });
   if (!Number.isFinite(field.min) || !Number.isFinite(field.max) || field.min > field.max) {
     errors.push(issue("invalid-field-range", "Core result field min/max must be finite and ordered.", path));
+  }
+  if (typeof field.units !== "string" || field.units.length === 0) {
+    errors.push(issue("missing-field-units", "Core result field units must be present.", `${path}.units`));
   }
   if (field.values.length > 0 && field.values.every(Number.isFinite)) {
     const actualMin = Math.min(...field.values);

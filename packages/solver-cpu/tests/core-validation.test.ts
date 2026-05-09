@@ -90,6 +90,41 @@ describe("Core validation suite static benchmarks", () => {
     expect(reaction[2]).toBeCloseTo(0, 8);
   });
 
+  test("aluminum cantilever sanity result matches app-facing MPa mm N bands", () => {
+    const force = 500;
+    const model = createStructuredCantileverModel({
+      length: 0.18,
+      width: 0.024,
+      height: 0.024,
+      force,
+      xDivisions: 16,
+      yDivisions: 3,
+      zDivisions: 3
+    });
+
+    const result = solveStaticLinearTet(model, { method: "sparse", tolerance: 1e-10, maxIterations: 20000 });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const coreResult = result.result.coreResult;
+    expect(coreResult?.summary.provenance).toBeDefined();
+    expect(coreResult?.summary.maxStressUnits).toBe("Pa");
+    expect(coreResult?.summary.maxDisplacementUnits).toBe("m");
+    expect(coreResult?.summary.reactionForceUnits).toBe("N");
+
+    const maxStressMpa = (coreResult?.summary.maxStress ?? 0) / 1_000_000;
+    const maxDisplacementMm = (coreResult?.summary.maxDisplacement ?? 0) * 1000;
+    const reactionForce = coreResult?.summary.reactionForce ?? 0;
+
+    expect(maxStressMpa).toBeGreaterThanOrEqual(25);
+    expect(maxStressMpa).toBeLessThanOrEqual(45);
+    expect(maxDisplacementMm).toBeGreaterThanOrEqual(0.35);
+    expect(maxDisplacementMm).toBeLessThanOrEqual(0.75);
+    expect(reactionForce).toBeGreaterThanOrEqual(495);
+    expect(reactionForce).toBeLessThanOrEqual(505);
+    expect(Number.isFinite(coreResult?.summary.safetyFactor)).toBe(true);
+  });
+
   test("pressure patch total force equals pressure times area and balances reactions", () => {
     const pressure = 25;
     const model = createHexBarModel({
@@ -362,6 +397,100 @@ function dynamicLoadedModel(loadProfile: "ramp" | "step" | "sinusoidal"): OpenCA
   return {
     ...model,
     steps: model.steps.map((step) => (step.type === "dynamicLinear" ? { ...step, loadProfile } : step))
+  };
+}
+
+function createStructuredCantileverModel(options: {
+  length: number;
+  width: number;
+  height: number;
+  force: number;
+  xDivisions: number;
+  yDivisions: number;
+  zDivisions: number;
+}): OpenCAEModelJson {
+  const coordinates: number[] = [];
+  const nodeIndex = (i: number, j: number, k: number) =>
+    i * (options.yDivisions + 1) * (options.zDivisions + 1) + j * (options.zDivisions + 1) + k;
+  for (let i = 0; i <= options.xDivisions; i += 1) {
+    const x = (options.length * i) / options.xDivisions;
+    for (let j = 0; j <= options.yDivisions; j += 1) {
+      const y = -options.width / 2 + (options.width * j) / options.yDivisions;
+      for (let k = 0; k <= options.zDivisions; k += 1) {
+        const z = -options.height / 2 + (options.height * k) / options.zDivisions;
+        coordinates.push(x, y, z);
+      }
+    }
+  }
+
+  const connectivity: number[] = [];
+  for (let i = 0; i < options.xDivisions; i += 1) {
+    for (let j = 0; j < options.yDivisions; j += 1) {
+      for (let k = 0; k < options.zDivisions; k += 1) {
+        const cube = [
+          nodeIndex(i, j, k),
+          nodeIndex(i + 1, j, k),
+          nodeIndex(i + 1, j + 1, k),
+          nodeIndex(i, j + 1, k),
+          nodeIndex(i, j, k + 1),
+          nodeIndex(i + 1, j, k + 1),
+          nodeIndex(i + 1, j + 1, k + 1),
+          nodeIndex(i, j + 1, k + 1)
+        ];
+        for (let offset = 0; offset < HEX_TETS.length; offset += 4) {
+          connectivity.push(
+            cube[HEX_TETS[offset]!]!,
+            cube[HEX_TETS[offset + 1]!]!,
+            cube[HEX_TETS[offset + 2]!]!,
+            cube[HEX_TETS[offset + 3]!]!
+          );
+        }
+      }
+    }
+  }
+
+  const base: OpenCAEModelJson = {
+    schema: "opencae.model",
+    schemaVersion: "0.2.0",
+    nodes: { coordinates },
+    materials: [
+      {
+        name: "Aluminum 6061",
+        type: "isotropicLinearElastic",
+        youngModulus: 68_900_000_000,
+        poissonRatio: 0.33,
+        density: 2700,
+        yieldStrength: 276_000_000
+      }
+    ],
+    elementBlocks: [{ name: "cantilever", type: "Tet4", material: "Aluminum 6061", connectivity }],
+    nodeSets: [],
+    elementSets: [{ name: "all", elements: Array.from({ length: connectivity.length / 4 }, (_value, index) => index) }],
+    boundaryConditions: [],
+    loads: [],
+    steps: [],
+    coordinateSystem: { solverUnits: "m-N-s-Pa", renderCoordinateSpace: "solver" },
+    meshProvenance: {
+      kind: "opencae_core_fea",
+      solver: "opencae-core-cloud",
+      resultSource: "computed",
+      meshSource: "actual_volume_mesh"
+    }
+  };
+  const surfaceFacets = extractBoundarySurfaceFacets(base);
+  const fixedFace = surfaceSetByX("fixedFace", surfaceFacets, coordinates, 0);
+  const tipFace = surfaceSetByX("tipFace", surfaceFacets, coordinates, options.length);
+  return {
+    ...base,
+    surfaceFacets,
+    surfaceSets: [fixedFace, tipFace],
+    nodeSets: [
+      { name: "fixedNodes", nodes: nodeSetFromSurfaceSet(fixedFace, surfaceFacets) },
+      { name: "tipNodes", nodes: nodeSetFromSurfaceSet(tipFace, surfaceFacets) }
+    ],
+    boundaryConditions: [{ name: "fixedSupport", type: "fixed", nodeSet: "fixedNodes", components: ["x", "y", "z"] }],
+    loads: [{ name: "tipLoad", type: "surfaceForce", surfaceSet: "tipFace", totalForce: [0, 0, -options.force] }],
+    steps: [{ name: "loadStep", type: "staticLinear", boundaryConditions: ["fixedSupport"], loads: ["tipLoad"] }]
   };
 }
 

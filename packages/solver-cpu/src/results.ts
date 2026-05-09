@@ -15,6 +15,9 @@ export function staticCoreResultFromSolve(
 ): CoreSolveResult {
   const surfaceMesh = solverSurfaceMeshFromModel(model);
   const safetyFactor = computeSafetyFactor(model, result.vonMises);
+  const provenance = coreProvenance(model, "opencae-core-sparse-tet");
+  const maxDisplacement = maxNodeVectorNorm(result.displacement);
+  const reactionForce = vectorSumMagnitude(result.reactionForce);
   const fields: CoreResultField[] = [
     createCoreResultField({
       id: "displacement",
@@ -47,17 +50,30 @@ export function staticCoreResultFromSolve(
   }
 
   const minSafetyFactor = positiveMin(safetyFactor);
+  const resultDiagnostics: unknown[] = [{ ...diagnostics }];
+  if (maxDisplacement === 0 && reactionForce > 1e-12) {
+    resultDiagnostics.push({
+      id: "zero-displacement-nonzero-load",
+      severity: "warning",
+      source: "solver",
+      message: "Displacement is exactly zero even though the solved reaction force is nonzero."
+    });
+  }
   return {
     summary: {
       maxStress: maxAbs(result.vonMises),
-      maxDisplacement: maxNodeVectorNorm(result.displacement),
+      maxStressUnits: stressUnits(model),
+      maxDisplacement,
+      maxDisplacementUnits: displacementUnits(model),
       safetyFactor: minSafetyFactor,
-      reactionForce: vectorSumMagnitude(result.reactionForce)
+      reactionForce,
+      reactionForceUnits: "N",
+      provenance
     },
     fields,
     surfaceMesh,
-    diagnostics: [{ ...diagnostics }],
-    provenance: coreProvenance(model, "opencae-core-sparse-tet")
+    diagnostics: resultDiagnostics,
+    provenance
   };
 }
 
@@ -67,6 +83,7 @@ export function dynamicCoreResultFromSolve(
   diagnostics: DynamicTet4CpuDiagnostics
 ): CoreSolveResult {
   const surfaceMesh = solverSurfaceMeshFromModel(model);
+  const provenance = coreProvenance(model, "opencae-core-mdof-tet");
   const fields: CoreResultField[] = [];
   for (const frame of result.frames) {
     fields.push(
@@ -130,9 +147,13 @@ export function dynamicCoreResultFromSolve(
   return {
     summary: {
       maxStress: diagnostics.maxVonMisesStress,
+      maxStressUnits: stressUnits(model),
       maxDisplacement: diagnostics.peakDisplacement,
+      maxDisplacementUnits: displacementUnits(model),
       safetyFactor: diagnostics.minSafetyFactor,
-      reactionForce: result.frames.length > 0 ? vectorSumMagnitude(result.frames.at(-1)?.reactionForce) : undefined,
+      reactionForce: result.frames.length > 0 ? vectorSumMagnitude(result.frames.at(-1)?.reactionForce) : 0,
+      reactionForceUnits: "N",
+      provenance,
       transient: {
         frameCount: diagnostics.frameCount,
         analysisType: "dynamic_structural",
@@ -150,7 +171,7 @@ export function dynamicCoreResultFromSolve(
     fields,
     surfaceMesh,
     diagnostics: [{ ...diagnostics }],
-    provenance: coreProvenance(model, "opencae-core-mdof-tet")
+    provenance
   };
 }
 
