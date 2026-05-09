@@ -56,15 +56,21 @@ describe("assembleNodalLoadVector", () => {
     const model = baseModel();
     model.loads = [{ name: "push", type: "surfaceForce", surfaceSet: "sloped", totalForce: [3, 6, 9] }];
 
-    const { vector, diagnostics } = assembleNodalLoadVectorWithDiagnostics(model, ["push"]);
+    const { force, vector, diagnostics } = assembleNodalLoadVectorWithDiagnostics(model, ["push"]);
 
+    expect(force).toBe(vector);
     expectApproxVector(sumVector(vector), [3, 6, 9]);
     expectApproxVector(diagnostics.totalAppliedForce, [3, 6, 9]);
-    expect(diagnostics.loads[0]).toMatchObject({
+    expect(diagnostics.totalAppliedForceMagnitude).toBeCloseTo(Math.hypot(3, 6, 9));
+    expect(diagnostics.perLoad).toBe(diagnostics.loads);
+    expect(diagnostics.perLoad[0]).toMatchObject({
       name: "push",
       type: "surfaceForce",
-      surfaceArea: Math.sqrt(3) / 2
+      surfaceArea: Math.sqrt(3) / 2,
+      selectedArea: Math.sqrt(3) / 2,
+      totalAppliedForceMagnitude: Math.hypot(3, 6, 9)
     });
+    expect(diagnostics.perLoad[0]?.loadCentroid).toEqual([1 / 3, 1 / 3, 1 / 3]);
   });
 
   test("assembles explicit-direction pressure as pressure times area times direction", () => {
@@ -74,7 +80,8 @@ describe("assembleNodalLoadVector", () => {
     const { vector, diagnostics } = assembleNodalLoadVectorWithDiagnostics(model, ["pressure"]);
 
     expectApproxVector(sumVector(vector), [0, 0, -5 * Math.sqrt(3)]);
-    expect(diagnostics.loads[0].surfaceArea).toBeCloseTo(Math.sqrt(3) / 2);
+    expect(diagnostics.perLoad[0].surfaceArea).toBeCloseTo(Math.sqrt(3) / 2);
+    expect(diagnostics.perLoad[0].selectedArea).toBeCloseTo(Math.sqrt(3) / 2);
   });
 
   test("uses facet normals when pressure direction is omitted", () => {
@@ -92,7 +99,7 @@ describe("assembleNodalLoadVector", () => {
 
     const { vector, diagnostics } = assembleNodalLoadVectorWithDiagnostics(model, ["gravity"]);
 
-    expect(diagnostics.loads[0].mass).toBeCloseTo(2);
+    expect(diagnostics.perLoad[0].mass).toBeCloseTo(2);
     expectApproxVector(sumVector(vector), [0, 0, -19.62]);
     expectApproxVector(diagnostics.totalAppliedForce, [0, 0, -19.62]);
   });

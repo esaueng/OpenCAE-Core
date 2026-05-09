@@ -50,6 +50,13 @@ const TET4_FACES = [
   [0, 2, 1]
 ] as const;
 
+const TET10_FACES = [
+  [1, 2, 3, 5, 9, 8],
+  [0, 3, 2, 7, 9, 6],
+  [0, 1, 3, 4, 8, 7],
+  [0, 2, 1, 6, 5, 4]
+] as const;
+
 export function nodesPerElement(type: ElementType): number {
   return type === "Tet4" ? 4 : 10;
 }
@@ -106,13 +113,11 @@ export function buildSurfaceFacets(input: BuildSurfaceFacetsInput): SurfaceFacet
   const faces = new Map<string, SurfaceFacetJson & { _count: number }>();
   let globalElement = 0;
   for (const block of input.elementBlocks) {
-    if (block.type !== "Tet4") {
-      globalElement += Math.floor(block.connectivity.length / nodesPerElement(block.type));
-      continue;
-    }
-    for (let offset = 0; offset < block.connectivity.length; offset += 4) {
-      for (let faceIndex = 0; faceIndex < TET4_FACES.length; faceIndex += 1) {
-        const face = TET4_FACES[faceIndex];
+    const nodesPer = nodesPerElement(block.type);
+    const faceTable = block.type === "Tet10" ? TET10_FACES : TET4_FACES;
+    for (let offset = 0; offset + nodesPer <= block.connectivity.length; offset += nodesPer) {
+      for (let faceIndex = 0; faceIndex < faceTable.length; faceIndex += 1) {
+        const face = faceTable[faceIndex];
         const nodes = face.map((localNode) => block.connectivity[offset + localNode]);
         const key = [...nodes].sort((a, b) => a - b).join(":");
         const existing = faces.get(key);
@@ -188,20 +193,22 @@ export function createSolverSurfaceMesh(input: SolverSurfaceMeshInput): SolverSu
 
   for (const facet of input.surfaceFacets) {
     if (facet.nodes.length < 3) continue;
-    const triangle = facet.nodes.slice(0, 3).map((node) => {
-      let mapped = nodeMap.get(node);
-      if (mapped === undefined) {
-        mapped = surfaceNodes.length / 3;
-        nodeMap.set(node, mapped);
-        surfaceNodes.push(
-          coordinateAt(input.coordinates, node, 0),
-          coordinateAt(input.coordinates, node, 1),
-          coordinateAt(input.coordinates, node, 2)
-        );
-      }
-      return mapped;
-    });
-    surfaceTriangles.push(...triangle);
+    for (const facetTriangle of triangulateFacetNodes(facet.nodes)) {
+      const triangle = facetTriangle.map((node) => {
+        let mapped = nodeMap.get(node);
+        if (mapped === undefined) {
+          mapped = surfaceNodes.length / 3;
+          nodeMap.set(node, mapped);
+          surfaceNodes.push(
+            coordinateAt(input.coordinates, node, 0),
+            coordinateAt(input.coordinates, node, 1),
+            coordinateAt(input.coordinates, node, 2)
+          );
+        }
+        return mapped;
+      });
+      surfaceTriangles.push(...triangle);
+    }
   }
 
   return {
@@ -210,6 +217,18 @@ export function createSolverSurfaceMesh(input: SolverSurfaceMeshInput): SolverSu
     coordinateSpace: input.coordinateSpace ?? "solver",
     meshRef: input.meshRef ?? "solver-surface"
   };
+}
+
+function triangulateFacetNodes(nodes: ArrayLike<number>): [number, number, number][] {
+  if (nodes.length >= 6) {
+    return [
+      [nodes[0], nodes[3], nodes[5]],
+      [nodes[3], nodes[1], nodes[4]],
+      [nodes[5], nodes[4], nodes[2]],
+      [nodes[3], nodes[4], nodes[5]]
+    ];
+  }
+  return [[nodes[0], nodes[1], nodes[2]]];
 }
 
 export function computeTet4SignedVolume(coordinates: number[] | Float64Array, nodes: ArrayLike<number>): number {

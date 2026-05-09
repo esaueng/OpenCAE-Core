@@ -65,7 +65,7 @@ export function solvePreviewSdofTet4Cpu(
           kind: "local_estimate",
           solver: "opencae-core-preview-sdof",
           resultSource: "computed_preview",
-          meshSource: "structured_block"
+          meshSource: "structured_block_core"
         }
       },
       frames

@@ -57,7 +57,7 @@ describe("OpenCAE Core Cloud runner", () => {
       ok?: unknown;
       result?: unknown;
       fields: unknown[];
-      provenance: { kind: string; resultSource: string; solver: string };
+      provenance: { kind: string; resultSource: string; solver: string; runnerVersion?: string };
     };
     expect(body.ok).toBeUndefined();
     expect(body.result).toBeUndefined();
@@ -65,8 +65,9 @@ describe("OpenCAE Core Cloud runner", () => {
     expect(body.provenance).toMatchObject({
       kind: "opencae_core_fea",
       resultSource: "computed",
-      solver: "opencae-core-sparse-tet"
+      solver: "opencae-core-cloud"
     });
+    expect(body.provenance.runnerVersion).toBeDefined();
   });
 
   test("does not synthesize or independently compact surface stress fields", () => {
@@ -106,9 +107,9 @@ describe("OpenCAE Core Cloud runner", () => {
     const report = validateCoreResult({
       summary: {
         maxStress: 10,
-        maxStressUnits: "Pa",
+        maxStressUnits: "MPa",
         maxDisplacement: 0.1,
-        maxDisplacementUnits: "m",
+        maxDisplacementUnits: "mm",
         reactionForce: 5,
         reactionForceUnits: "N",
         provenance: {
@@ -116,7 +117,7 @@ describe("OpenCAE Core Cloud runner", () => {
           solver: "opencae-core-sparse-tet",
           resultSource: "computed",
           meshSource: "actual_volume_mesh",
-          units: "m-N-s-Pa"
+          units: "mm-N-s-MPa"
         }
       },
       fields: [
@@ -138,7 +139,7 @@ describe("OpenCAE Core Cloud runner", () => {
         solver: "opencae-core-sparse-tet",
         resultSource: "computed",
         meshSource: "actual_volume_mesh",
-        units: "m-N-s-Pa"
+        units: "mm-N-s-MPa"
       }
     } satisfies CoreSolveResult);
 
@@ -166,7 +167,7 @@ describe("OpenCAE Core Cloud runner", () => {
     expect(body.provenance).toMatchObject({
       kind: "opencae_core_fea",
       resultSource: "computed",
-      solver: "opencae-core-mdof-tet"
+      solver: "opencae-core-cloud"
     });
   });
 
@@ -182,6 +183,51 @@ describe("OpenCAE Core Cloud runner", () => {
     });
 
     expect(response.status).toBe(422);
+  });
+
+  test("accepts coreVolumeMesh and rejects ambiguous model inputs", () => {
+    const response = solveResponse({
+      analysisType: "static_stress",
+      coreVolumeMesh: {
+        nodes: singleTetStaticFixture.nodes,
+        materials: singleTetStaticFixture.materials,
+        elementBlocks: singleTetStaticFixture.elementBlocks,
+        nodeSets: singleTetStaticFixture.nodeSets,
+        boundaryConditions: singleTetStaticFixture.boundaryConditions,
+        loads: singleTetStaticFixture.loads,
+        steps: singleTetStaticFixture.steps
+      }
+    });
+    const ambiguous = solveResponse({
+      analysisType: "static_stress",
+      coreModel: singleTetStaticFixture,
+      coreVolumeMesh: {
+        nodes: singleTetStaticFixture.nodes,
+        materials: singleTetStaticFixture.materials,
+        elementBlocks: singleTetStaticFixture.elementBlocks
+      }
+    });
+
+    expect(response.status).toBe(200);
+    expect(ambiguous.status).toBe(400);
+  });
+
+  test("rejects display proxy provenance at the cloud boundary", () => {
+    const response = solveResponse({
+      analysisType: "static_stress",
+      coreModel: {
+        ...singleTetStaticFixture,
+        schemaVersion: "0.2.0",
+        meshProvenance: {
+          kind: "opencae_core_fea",
+          solver: "opencae-core-sparse-tet",
+          resultSource: "computed",
+          meshSource: "display_bounds_proxy"
+        }
+      }
+    });
+
+    expect(response.status).toBe(400);
   });
 
   test("rejects preview requests", () => {

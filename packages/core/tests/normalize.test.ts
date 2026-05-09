@@ -75,10 +75,10 @@ describe("normalizeModelJson", () => {
           id: 7,
           element: 0,
           elementFace: 0,
-          nodes: [0, 2, 1],
-          area: 0.5,
-          normal: [0, 0, -1],
-          center: [1 / 3, 1 / 3, 0],
+          nodes: [1, 2, 3],
+          area: Math.sqrt(3) / 2,
+          normal: [1 / Math.sqrt(3), 1 / Math.sqrt(3), 1 / Math.sqrt(3)],
+          center: [1 / 3, 1 / 3, 1 / 3],
           sourceFaceId: "base"
         }
       ],

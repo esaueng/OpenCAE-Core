@@ -1,5 +1,14 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { OPENCAE_CORE_VERSION, validateCoreResult, validateModelJson, type CoreResultValidationReport, type OpenCAEModelJson } from "@opencae/core";
+import {
+  OPENCAE_CORE_VERSION,
+  validateCoreResult,
+  validateModelJson,
+  volumeMeshToModelJson,
+  type CoreResultValidationReport,
+  type CoreSolveResult,
+  type OpenCAEModelJson,
+  type VolumeMeshToModelInput
+} from "@opencae/core";
 import { solveCoreDynamic, solveCoreStatic, type CpuSolverOptions, type DynamicTet4CpuOptions } from "@opencae/solver-cpu";
 
 export const RUNNER_VERSION = "0.1.0";
@@ -11,7 +20,8 @@ export type CloudAnalysisType = "static_stress" | "dynamic_structural";
 export type CloudSolveRequest = {
   runId?: string;
   analysisType: CloudAnalysisType;
-  coreModel: OpenCAEModelJson;
+  coreModel?: OpenCAEModelJson;
+  coreVolumeMesh?: VolumeMeshToModelInput;
   solverSettings?: (CpuSolverOptions & DynamicTet4CpuOptions & { allowPreview?: boolean }) | undefined;
   resultSettings?: Record<string, unknown>;
 };
@@ -42,16 +52,17 @@ export function healthResponse(): CloudResponse {
 
 export function solveResponse(request: unknown): CloudResponse {
   if (!isSolveRequest(request)) {
-    return errorResponse(400, "invalid-request", "Request must include analysisType and coreModel.");
+    return errorResponse(400, "invalid-request", "Request must include analysisType and exactly one of coreModel or coreVolumeMesh.");
   }
   if (request.solverSettings?.allowPreview) {
     return errorResponse(400, "preview-disabled", "OpenCAE Core Cloud does not allow preview solvers.");
   }
 
-  const validation = validateModelJson(request.coreModel);
+  const model = request.coreModel ?? volumeMeshToModelJson(request.coreVolumeMesh!);
+  const validation = validateModelJson(model);
   if (!validation.ok) {
     return {
-      status: 422,
+      status: model.meshProvenance?.meshSource === "display_bounds_proxy" ? 400 : 422,
       body: {
         ok: false,
         error: {
@@ -65,8 +76,8 @@ export function solveResponse(request: unknown): CloudResponse {
 
   const result =
     request.analysisType === "static_stress"
-      ? solveCoreStatic(request.coreModel, { ...request.solverSettings, method: request.solverSettings?.method ?? "sparse" })
-      : solveCoreDynamic(request.coreModel, request.solverSettings);
+      ? solveCoreStatic(model, { ...request.solverSettings, method: "sparse", solverMode: "sparse" })
+      : solveCoreDynamic(model, request.solverSettings);
 
   if (!result.ok) {
     return {
@@ -80,7 +91,8 @@ export function solveResponse(request: unknown): CloudResponse {
     };
   }
 
-  const resultValidation = validateCoreResult(result.result);
+  const cloudResult = stampCloudProvenance(result.result);
+  const resultValidation = validateCoreResult(cloudResult);
   if (!resultValidation.ok) {
     return {
       status: 500,
@@ -98,7 +110,7 @@ export function solveResponse(request: unknown): CloudResponse {
 
   return {
     status: 200,
-    body: result.result
+    body: cloudResult
   };
 }
 
@@ -129,11 +141,40 @@ export function createCoreCloudServer() {
 function isSolveRequest(value: unknown): value is CloudSolveRequest {
   if (!value || typeof value !== "object") return false;
   const request = value as Partial<CloudSolveRequest>;
+  const hasCoreModel = !!request.coreModel && typeof request.coreModel === "object";
+  const hasCoreVolumeMesh = !!request.coreVolumeMesh && typeof request.coreVolumeMesh === "object";
   return (
     (request.analysisType === "static_stress" || request.analysisType === "dynamic_structural") &&
-    !!request.coreModel &&
-    typeof request.coreModel === "object"
+    hasCoreModel !== hasCoreVolumeMesh
   );
+}
+
+function stampCloudProvenance(result: CoreSolveResult): CoreSolveResult {
+  const provenance = {
+    ...result.provenance,
+    solver: "opencae-core-cloud" as const,
+    coreVersion: OPENCAE_CORE_VERSION,
+    solverCpuVersion: SOLVER_CPU_VERSION,
+    runnerVersion: RUNNER_VERSION
+  };
+  return {
+    ...result,
+    summary: {
+      ...result.summary,
+      provenance
+    },
+    provenance,
+    diagnostics: result.diagnostics.map((diagnostic) => {
+      if (!diagnostic || typeof diagnostic !== "object" || !("id" in diagnostic)) return diagnostic;
+      if ((diagnostic as { id?: unknown }).id !== "core-solve-diagnostics") return diagnostic;
+      return {
+        ...diagnostic,
+        coreVersion: OPENCAE_CORE_VERSION,
+        solverCpuVersion: SOLVER_CPU_VERSION,
+        runnerVersion: RUNNER_VERSION
+      };
+    })
+  };
 }
 
 function errorResponse(status: number, code: string, message: string): CloudResponse {

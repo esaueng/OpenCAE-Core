@@ -47,6 +47,34 @@ describe("Core validation suite mesh topology", () => {
     expect(surfaceMesh.nodes).toHaveLength(4);
   });
 
+  test("Tet10 boundary extraction keeps quadratic face nodes and triangulates solver surface", () => {
+    const model = modelWith(
+      [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+      [
+        0, 0, 0,
+        1, 0, 0,
+        0, 1, 0,
+        0, 0, 1,
+        0.5, 0, 0,
+        0.5, 0.5, 0,
+        0, 0.5, 0,
+        0, 0, 0.5,
+        0.5, 0, 0.5,
+        0, 0.5, 0.5
+      ],
+      "Tet10"
+    );
+
+    const facets = extractBoundarySurfaceFacets(model);
+    const surfaceMesh = solverSurfaceMeshFromModel({ ...model, surfaceFacets: facets });
+
+    expect(facets).toHaveLength(4);
+    expect(facets[0]?.nodes).toHaveLength(6);
+    expect(surfaceMesh.nodes).toHaveLength(10);
+    expect(surfaceMesh.triangles).toHaveLength(16);
+    expect(surfaceMesh.nodeMap).toHaveLength(surfaceMesh.nodes.length);
+  });
+
   test("orphan nodes are detected before solve", () => {
     const model = modelWith([0, 1, 2, 3], [0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 9, 9, 9]);
 
@@ -54,13 +82,13 @@ describe("Core validation suite mesh topology", () => {
   });
 });
 
-function modelWith(connectivity: number[], coordinates: number[]): OpenCAEModelJson {
+function modelWith(connectivity: number[], coordinates: number[], type: "Tet4" | "Tet10" = "Tet4"): OpenCAEModelJson {
   return {
     schema: "opencae.model",
     schemaVersion: "0.2.0",
     nodes: { coordinates },
     materials: [material],
-    elementBlocks: [{ name: "solid", type: "Tet4", material: "steel", connectivity }],
+    elementBlocks: [{ name: "solid", type, material: "steel", connectivity }],
     nodeSets: [],
     elementSets: [],
     boundaryConditions: [],

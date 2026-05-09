@@ -14,6 +14,14 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "lint": "pnpm run typecheck"
+    "lint": "pnpm run typecheck",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@opencae/core": "workspace:*"
+  },
+  "devDependencies": {
+    "@opencae/examples": "workspace:*",
+    "@opencae/solver-cpu": "workspace:*"
   }
 }

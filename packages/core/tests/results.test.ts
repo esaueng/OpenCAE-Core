@@ -48,7 +48,7 @@ describe("Core result structures", () => {
           values: [0, 0.1, 0.2, 0.3],
           min: 0,
           max: 0.3,
-          units: "m",
+          units: "mm",
           surfaceMeshRef: "solver-surface"
         }
       ],
@@ -59,7 +59,7 @@ describe("Core result structures", () => {
         solver: "opencae-core-sparse-tet",
         resultSource: "computed",
         meshSource: "actual_volume_mesh",
-        units: "m-N-s-Pa"
+        units: "mm-N-s-MPa"
       }
     };
 
@@ -107,7 +107,7 @@ describe("Core result structures", () => {
         solver: "opencae-core-sparse-tet",
         resultSource: "computed",
         meshSource: "actual_volume_mesh",
-        units: "m-N-s-Pa"
+        units: "mm-N-s-MPa"
       }
     };
 
@@ -132,9 +132,9 @@ describe("Core result structures", () => {
     const result: CoreSolveResult = {
       summary: {
         maxStress: 10,
-        maxStressUnits: "Pa",
+        maxStressUnits: "MPa",
         maxDisplacement: 0.1,
-        maxDisplacementUnits: "m",
+        maxDisplacementUnits: "mm",
         reactionForce: 5,
         reactionForceUnits: "N",
         provenance: {
@@ -142,7 +142,7 @@ describe("Core result structures", () => {
           solver: "opencae-core-sparse-tet",
           resultSource: "computed",
           meshSource: "actual_volume_mesh",
-          units: "m-N-s-Pa"
+          units: "mm-N-s-MPa"
         }
       },
       fields: [
@@ -153,7 +153,7 @@ describe("Core result structures", () => {
           values: [1, 2, 3],
           min: 1,
           max: 3,
-          units: "Pa",
+          units: "MPa",
           surfaceMeshRef: surfaceMesh.id
         }
       ],
@@ -164,7 +164,7 @@ describe("Core result structures", () => {
         solver: "opencae-core-sparse-tet",
         resultSource: "computed",
         meshSource: "actual_volume_mesh",
-        units: "m-N-s-Pa"
+        units: "mm-N-s-MPa"
       }
     };
 
@@ -184,9 +184,9 @@ describe("Core result structures", () => {
     const result: CoreSolveResult = {
       summary: {
         maxStress: 10,
-        maxStressUnits: "Pa",
+        maxStressUnits: "MPa",
         maxDisplacement: 0.1,
-        maxDisplacementUnits: "m",
+        maxDisplacementUnits: "mm",
         reactionForce: 5,
         reactionForceUnits: "N",
         provenance: {
@@ -194,7 +194,7 @@ describe("Core result structures", () => {
           solver: "opencae-core-sparse-tet",
           resultSource: "computed",
           meshSource: "actual_volume_mesh",
-          units: "m-N-s-Pa"
+          units: "mm-N-s-MPa"
         }
       },
       fields: [
@@ -228,7 +228,7 @@ describe("Core result structures", () => {
         solver: "opencae-core-sparse-tet",
         resultSource: "computed",
         meshSource: "actual_volume_mesh",
-        units: "m-N-s-Pa"
+        units: "mm-N-s-MPa"
       }
     };
 

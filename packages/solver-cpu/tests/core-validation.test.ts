@@ -110,12 +110,12 @@ describe("Core validation suite static benchmarks", () => {
     if (!result.ok) return;
     const coreResult = result.result.coreResult;
     expect(coreResult?.summary.provenance).toBeDefined();
-    expect(coreResult?.summary.maxStressUnits).toBe("Pa");
-    expect(coreResult?.summary.maxDisplacementUnits).toBe("m");
+    expect(coreResult?.summary.maxStressUnits).toBe("MPa");
+    expect(coreResult?.summary.maxDisplacementUnits).toBe("mm");
     expect(coreResult?.summary.reactionForceUnits).toBe("N");
 
-    const maxStressMpa = (coreResult?.summary.maxStress ?? 0) / 1_000_000;
-    const maxDisplacementMm = (coreResult?.summary.maxDisplacement ?? 0) * 1000;
+    const maxStressMpa = coreResult?.summary.maxStress ?? 0;
+    const maxDisplacementMm = coreResult?.summary.maxDisplacement ?? 0;
     const reactionForce = coreResult?.summary.reactionForce ?? 0;
 
     expect(maxStressMpa).toBeGreaterThanOrEqual(25);
@@ -224,7 +224,7 @@ describe("Core validation suite static benchmarks", () => {
     const diagnostic = coreResult?.diagnostics.find(isStressVisualizationDiagnostic);
 
     expect(diagnostic).toBeDefined();
-    expect(diagnostic?.engineeringStressMaxMpa).toBeCloseTo((coreResult?.summary.maxStress ?? 0) / 1_000_000, 12);
+    expect(diagnostic?.engineeringStressMaxMpa).toBeCloseTo(coreResult?.summary.maxStress ?? 0, 12);
     expect(diagnostic?.plotStressMinMpa).toBe(stressField?.min);
     expect(diagnostic?.plotStressMaxMpa).toBe(stressField?.max);
     expect(diagnostic?.stressRecoveryMethod).toBe("volume_weighted_nodal_recovery");
@@ -250,6 +250,13 @@ describe("Core validation suite static benchmarks", () => {
     expect(populatedBins.length).toBeGreaterThan(4);
     expect(populatedBins[0]?.maxStress).toBeGreaterThan((populatedBins.at(-1)?.maxStress ?? 0) * 1.4);
     expect(diagnostic?.warnings).not.toContain("Stress field has an abrupt spatial discontinuity; verify surface node mapping and load/support selection.");
+
+    const coreDiagnostic = coreResult?.diagnostics.find(isCoreSolveDiagnostic);
+    expect(coreDiagnostic?.displayMaxStressMpa).toBeCloseTo(coreResult?.summary.maxStress ?? 0, 12);
+    expect(coreDiagnostic?.displayMaxDisplacementMm).toBeCloseTo(coreResult?.summary.maxDisplacement ?? 0, 12);
+    expect(coreDiagnostic?.rawMaxStressPa).toBeGreaterThan(0);
+    expect(coreDiagnostic?.fieldSurfaceAlignment).toBe("ok");
+    expect(coreDiagnostic?.solverMethod).toBe("opencae-core-sparse-tet");
   });
 
   test("pressure patch total force equals pressure times area and balances reactions", () => {
@@ -749,7 +756,25 @@ function isStressVisualizationDiagnostic(value: unknown): value is {
   return (
     typeof value === "object" &&
     value !== null &&
+    "id" in value &&
+    (value as { id?: unknown }).id === "stress-visualization" &&
     "stressRecoveryMethod" in value &&
     (value as { stressRecoveryMethod?: unknown }).stressRecoveryMethod === "volume_weighted_nodal_recovery"
+  );
+}
+
+function isCoreSolveDiagnostic(value: unknown): value is {
+  id: "core-solve-diagnostics";
+  displayMaxStressMpa: number;
+  displayMaxDisplacementMm: number;
+  rawMaxStressPa: number;
+  fieldSurfaceAlignment: string;
+  solverMethod: string;
+} {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "id" in value &&
+    (value as { id?: unknown }).id === "core-solve-diagnostics"
   );
 }

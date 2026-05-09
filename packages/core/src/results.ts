@@ -50,22 +50,63 @@ export type CoreTransientSummary = {
 
 export type CoreSolveSummary = {
   maxStress: number;
-  maxStressUnits: string;
+  maxStressUnits: "MPa";
   maxDisplacement: number;
-  maxDisplacementUnits: string;
+  maxDisplacementUnits: "mm";
   safetyFactor?: number;
   reactionForce: number;
-  reactionForceUnits: string;
+  reactionForceUnits: "N";
   provenance: CoreSolveProvenance;
   transient?: CoreTransientSummary;
 };
 
 export type CoreSolveProvenance = {
   kind: "opencae_core_fea";
-  solver: "opencae-core-sparse-tet" | "opencae-core-mdof-tet";
+  solver: "opencae-core-cloud" | "opencae-core-sparse-tet" | "opencae-core-mdof-tet";
   resultSource: "computed";
   meshSource: "actual_volume_mesh" | "structured_block_core";
-  units: "m-N-s-Pa" | "mm-N-s-MPa";
+  units: "mm-N-s-MPa";
+  coreVersion?: string;
+  solverCpuVersion?: string;
+  runnerVersion?: string;
+};
+
+export type CoreSolveDiagnostics = {
+  id: "core-solve-diagnostics";
+  coreModelSchemaVersion: string;
+  coreVersion?: string;
+  solverCpuVersion?: string;
+  solverMethod: string;
+  meshSource: CoreSolveProvenance["meshSource"];
+  nodeCount: number;
+  elementCount: number;
+  surfaceNodeCount: number;
+  surfaceTriangleCount: number;
+  connectedComponentCount: number;
+  fixedNodeCount: number;
+  loadNodeCount: number;
+  fixedCentroid: [number, number, number];
+  loadCentroid: [number, number, number];
+  effectiveLeverArmMm: number;
+  totalLoadVectorN: [number, number, number];
+  reactionVectorN: [number, number, number];
+  reactionMagnitudeN: number;
+  rawMaxStressPa: number;
+  displayMaxStressMpa: number;
+  rawMaxDisplacementM: number;
+  displayMaxDisplacementMm: number;
+  engineeringStressMaxMpa: number;
+  plotStressMinMpa: number;
+  plotStressMaxMpa: number;
+  stressRecoveryMethod: string;
+  fieldSurfaceAlignment: "ok" | "mismatch";
+  stressByBeamAxisBin: Array<{
+    bin: number;
+    xCenter: number;
+    meanStress: number;
+    maxStress: number;
+    nodeCount: number;
+  }>;
 };
 
 export type CoreSolveResult = {
@@ -110,16 +151,18 @@ export function solverSurfaceMeshFromModel(
 
   for (const facet of facets) {
     if (facet.nodes.length < 3) continue;
-    const triangle = [facet.nodes[0], facet.nodes[1], facet.nodes[2]].map((volumeNode) => {
-      const existing = surfaceNodeByVolumeNode.get(volumeNode);
-      if (existing !== undefined) return existing;
-      const surfaceNode = nodes.length;
-      surfaceNodeByVolumeNode.set(volumeNode, surfaceNode);
-      nodeMap.push(volumeNode);
-      nodes.push(surfaceNodeCoordinates(coordinates, volumeNode, volumeNodeCount));
-      return surfaceNode;
-    });
-    triangles.push(triangle as [number, number, number]);
+    for (const facetTriangle of facetTriangles(facet.nodes)) {
+      const triangle = facetTriangle.map((volumeNode) => {
+        const existing = surfaceNodeByVolumeNode.get(volumeNode);
+        if (existing !== undefined) return existing;
+        const surfaceNode = nodes.length;
+        surfaceNodeByVolumeNode.set(volumeNode, surfaceNode);
+        nodeMap.push(volumeNode);
+        nodes.push(surfaceNodeCoordinates(coordinates, volumeNode, volumeNodeCount));
+        return surfaceNode;
+      });
+      triangles.push(triangle as [number, number, number]);
+    }
   }
 
   const surfaceMesh: SolverSurfaceMesh = {
@@ -133,6 +176,18 @@ export function solverSurfaceMeshFromModel(
   };
   assertValidSurfaceMesh(surfaceMesh);
   return surfaceMesh;
+}
+
+function facetTriangles(nodes: ArrayLike<number>): [number, number, number][] {
+  if (nodes.length >= 6) {
+    return [
+      [nodes[0], nodes[3], nodes[5]],
+      [nodes[3], nodes[1], nodes[4]],
+      [nodes[5], nodes[4], nodes[2]],
+      [nodes[3], nodes[4], nodes[5]]
+    ];
+  }
+  return [[nodes[0], nodes[1], nodes[2]]];
 }
 
 export function createCoreResultField(
@@ -175,11 +230,18 @@ function validateProvenance(provenance: CoreSolveProvenance, errors: CoreResultV
   if (provenance.resultSource !== "computed") {
     errors.push(issue("invalid-provenance", "Production Core result provenance must be computed.", "provenance.resultSource"));
   }
-  if (provenance.solver !== "opencae-core-sparse-tet" && provenance.solver !== "opencae-core-mdof-tet") {
+  if (
+    provenance.solver !== "opencae-core-cloud" &&
+    provenance.solver !== "opencae-core-sparse-tet" &&
+    provenance.solver !== "opencae-core-mdof-tet"
+  ) {
     errors.push(issue("invalid-provenance", "Production Core result solver must be an OpenCAE Core solver.", "provenance.solver"));
   }
   if (provenance.meshSource !== "actual_volume_mesh" && provenance.meshSource !== "structured_block_core") {
     errors.push(issue("invalid-provenance", "Production Core result meshSource must be actual Core mesh data.", "provenance.meshSource"));
+  }
+  if (provenance.units !== "mm-N-s-MPa") {
+    errors.push(issue("invalid-provenance-units", "Production Core result provenance units must be mm-N-s-MPa.", "provenance.units"));
   }
 }
 
@@ -208,14 +270,14 @@ function validateSummary(summary: CoreSolveSummary, errors: CoreResultValidation
   if (!Number.isFinite(summary.maxStress)) {
     errors.push(issue("non-finite-summary", "Summary maxStress must be finite.", "summary.maxStress"));
   }
-  if (typeof summary.maxStressUnits !== "string" || summary.maxStressUnits.length === 0) {
-    errors.push(issue("missing-summary-units", "Summary maxStressUnits must be present.", "summary.maxStressUnits"));
+  if (summary.maxStressUnits !== "MPa") {
+    errors.push(issue("missing-summary-units", "Summary maxStressUnits must be MPa.", "summary.maxStressUnits"));
   }
   if (!Number.isFinite(summary.maxDisplacement)) {
     errors.push(issue("non-finite-summary", "Summary maxDisplacement must be finite.", "summary.maxDisplacement"));
   }
-  if (typeof summary.maxDisplacementUnits !== "string" || summary.maxDisplacementUnits.length === 0) {
-    errors.push(issue("missing-summary-units", "Summary maxDisplacementUnits must be present.", "summary.maxDisplacementUnits"));
+  if (summary.maxDisplacementUnits !== "mm") {
+    errors.push(issue("missing-summary-units", "Summary maxDisplacementUnits must be mm.", "summary.maxDisplacementUnits"));
   }
   if (summary.safetyFactor !== undefined && !Number.isFinite(summary.safetyFactor)) {
     errors.push(issue("non-finite-summary", "Summary safetyFactor must be finite when present.", "summary.safetyFactor"));
@@ -223,8 +285,8 @@ function validateSummary(summary: CoreSolveSummary, errors: CoreResultValidation
   if (!Number.isFinite(summary.reactionForce)) {
     errors.push(issue("non-finite-summary", "Summary reactionForce must be finite.", "summary.reactionForce"));
   }
-  if (typeof summary.reactionForceUnits !== "string" || summary.reactionForceUnits.length === 0) {
-    errors.push(issue("missing-summary-units", "Summary reactionForceUnits must be present.", "summary.reactionForceUnits"));
+  if (summary.reactionForceUnits !== "N") {
+    errors.push(issue("missing-summary-units", "Summary reactionForceUnits must be N.", "summary.reactionForceUnits"));
   }
   if (!summary.provenance) {
     errors.push(issue("missing-summary-provenance", "Summary provenance must be present.", "summary.provenance"));

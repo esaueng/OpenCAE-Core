@@ -22,10 +22,10 @@ describe("renderCpuSolveSummary", () => {
         vonMises: new Float64Array([12_000_000]),
         coreResult: {
           summary: {
-            maxStress: 12_000_000,
-            maxStressUnits: "Pa",
-            maxDisplacement: 0.001,
-            maxDisplacementUnits: "m",
+            maxStress: 12,
+            maxStressUnits: "MPa",
+            maxDisplacement: 1,
+            maxDisplacementUnits: "mm",
             safetyFactor: 23,
             reactionForce: 500,
             reactionForceUnits: "N",
@@ -34,7 +34,7 @@ describe("renderCpuSolveSummary", () => {
               solver: "opencae-core-sparse-tet",
               resultSource: "computed",
               meshSource: "actual_volume_mesh",
-              units: "m-N-s-Pa"
+              units: "mm-N-s-MPa"
             }
           },
           fields: [
@@ -55,7 +55,7 @@ describe("renderCpuSolveSummary", () => {
             solver: "opencae-core-sparse-tet",
             resultSource: "computed",
             meshSource: "actual_volume_mesh",
-            units: "m-N-s-Pa"
+            units: "mm-N-s-MPa"
           }
         }
       }

@@ -1,11 +1,13 @@
 import { describe, expect, test } from "vitest";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { resolve } from "node:path";
 import { singleTetStaticFixture } from "@opencae/examples";
 import { validateCoreResult, type OpenCAEModelJson } from "@opencae/core";
 import {
   solveCoreDynamic,
   solveCorePreviewDynamic,
   solveCoreStatic,
-  solveDynamicTet4Cpu,
+  solvePreviewSdofTet4Cpu,
   solveStaticLinearTet,
   solveStaticLinearTetSparse
 } from "../src";
@@ -50,6 +52,10 @@ describe("public Core solver APIs", () => {
     expect(result.result.provenance.resultSource).toBe("computed");
     expect(result.result.provenance.solver).toBe("opencae-core-sparse-tet");
     expect(result.result.provenance.kind).toBe("opencae_core_fea");
+    expect(result.diagnostics.solverMode).toBe("sparse");
+    expect(result.result.summary.maxStressUnits).toBe("MPa");
+    expect(result.result.summary.maxDisplacementUnits).toBe("mm");
+    expect(result.result.provenance.units).toBe("mm-N-s-MPa");
     expect(result.result.fields.map((field) => field.type)).toEqual(expect.arrayContaining(["displacement", "stress"]));
     const surfaceStress = result.result.fields.find((field) => field.id === "stress-surface");
     const surfaceDisplacement = result.result.fields.find((field) => field.id === "displacement-surface");
@@ -115,7 +121,7 @@ describe("public Core solver APIs", () => {
         kind: "local_estimate",
         solver: "opencae-core-preview-sdof",
         resultSource: "computed_preview",
-        meshSource: "structured_block"
+        meshSource: "structured_block_core"
       }
     };
 
@@ -154,17 +160,42 @@ describe("public Core solver APIs", () => {
       timeStep: 0.005,
       outputInterval: 0.01
     });
-    const legacyPreview = solveDynamicTet4Cpu(singleTetStaticFixture, {
+    const directPreview = solvePreviewSdofTet4Cpu(singleTetStaticFixture, {
       endTime: 0.02,
       timeStep: 0.005,
       outputInterval: 0.01
     });
 
     expect(preview.ok).toBe(true);
-    expect(legacyPreview.ok).toBe(true);
-    if (!preview.ok || !legacyPreview.ok) return;
+    expect(directPreview.ok).toBe(true);
+    if (!preview.ok || !directPreview.ok) return;
     expect(preview.result.provenance?.resultSource).toBe("computed_preview");
     expect(preview.diagnostics.solver).toBe("opencae-core-preview-sdof");
-    expect(legacyPreview.diagnostics.solver).toBe("opencae-core-preview-sdof");
+    expect(directPreview.diagnostics.solver).toBe("opencae-core-preview-sdof");
+  });
+
+  test("production packages contain no CalculiX execution path", () => {
+    const offenders = sourceFiles(resolve(process.cwd(), "../.."))
+      .filter((file) => /(?:packages\/[^/]+\/src|services\/[^/]+\/src)\//.test(file))
+      .filter((file) => /(?:CalculiX|\bccx\b|\.frd\b|\.inp\b|\.dat\b)/.test(readFileSync(file, "utf8")));
+
+    expect(offenders).toEqual([]);
   });
 });
+
+function sourceFiles(root: string): string[] {
+  if (!existsSync(root)) return [];
+  const entries = readdirSync(root);
+  const files: string[] = [];
+  for (const entry of entries) {
+    if (entry === "node_modules" || entry === "dist" || entry === ".git") continue;
+    const path = resolve(root, entry);
+    const stat = statSync(path);
+    if (stat.isDirectory()) {
+      files.push(...sourceFiles(path));
+    } else if (/\.(ts|tsx|js|jsx)$/.test(entry)) {
+      files.push(path);
+    }
+  }
+  return files;
+}

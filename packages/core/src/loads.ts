@@ -31,17 +31,25 @@ export type LoadAssemblyPerLoadDiagnostics = {
   name: string;
   type: LoadJson["type"];
   totalAppliedForce: [number, number, number];
+  totalAppliedForceMagnitude: number;
   surfaceArea?: number;
+  selectedArea?: number;
+  loadCentroid?: [number, number, number];
   mass?: number;
 };
 
 export type LoadAssemblyDiagnostics = {
   totalAppliedForce: [number, number, number];
+  totalAppliedForceMagnitude: number;
+  loadCentroid?: [number, number, number];
+  fixedCentroid?: [number, number, number];
+  perLoad: LoadAssemblyPerLoadDiagnostics[];
   loads: LoadAssemblyPerLoadDiagnostics[];
   errors: LoadAssemblyError[];
 };
 
 export type LoadAssemblyResult = {
+  force: Float64Array;
   vector: Float64Array;
   diagnostics: LoadAssemblyDiagnostics;
 };
@@ -61,9 +69,12 @@ export function assembleNodalLoadVectorWithDiagnostics(
   stepLoadNames: string[]
 ): LoadAssemblyResult {
   const vector = new Float64Array((model.nodes.coordinates.length / 3) * 3);
+  const perLoad: LoadAssemblyPerLoadDiagnostics[] = [];
   const diagnostics: LoadAssemblyDiagnostics = {
     totalAppliedForce: [0, 0, 0],
-    loads: [],
+    totalAppliedForceMagnitude: 0,
+    perLoad,
+    loads: perLoad,
     errors: []
   };
   const loadByName = new Map(model.loads.map((load) => [load.name, load]));
@@ -82,17 +93,24 @@ export function assembleNodalLoadVectorWithDiagnostics(
     const loadDiagnostics: LoadAssemblyPerLoadDiagnostics = {
       name: load.name,
       type: load.type,
-      totalAppliedForce: loadTotal
+      totalAppliedForce: loadTotal,
+      totalAppliedForceMagnitude: 0
     };
 
     if (load.type === "nodalForce") {
       assembleNodalForce(model, vector, load, loadTotal, diagnostics);
+      loadDiagnostics.loadCentroid = nodeSetCentroid(model, load.nodeSet);
     } else if (load.type === "surfaceForce") {
       loadDiagnostics.surfaceArea = assembleSurfaceForce(model, vector, load, loadTotal, diagnostics);
+      loadDiagnostics.selectedArea = loadDiagnostics.surfaceArea;
+      loadDiagnostics.loadCentroid = surfaceSetCentroid(model, load.surfaceSet);
     } else if (load.type === "pressure") {
       loadDiagnostics.surfaceArea = assemblePressure(model, vector, load, loadTotal, diagnostics);
+      loadDiagnostics.selectedArea = loadDiagnostics.surfaceArea;
+      loadDiagnostics.loadCentroid = surfaceSetCentroid(model, load.surfaceSet);
     } else if (load.type === "bodyGravity") {
       loadDiagnostics.mass = assembleBodyGravity(model, vector, load, loadTotal, diagnostics);
+      loadDiagnostics.loadCentroid = modelCentroid(model);
     } else {
       const unsupportedLoad = load as unknown as { name?: string; type?: string };
       diagnostics.errors.push({
@@ -103,10 +121,15 @@ export function assembleNodalLoadVectorWithDiagnostics(
     }
 
     addVector(diagnostics.totalAppliedForce, loadTotal);
+    loadDiagnostics.totalAppliedForceMagnitude = vectorMagnitude(loadTotal);
+    diagnostics.perLoad.push(loadDiagnostics);
     diagnostics.loads.push(loadDiagnostics);
   }
 
-  return { vector, diagnostics };
+  diagnostics.totalAppliedForceMagnitude = vectorMagnitude(diagnostics.totalAppliedForce);
+  diagnostics.loadCentroid = combinedLoadCentroid(model, diagnostics.perLoad);
+
+  return { force: vector, vector, diagnostics };
 }
 
 function assembleNodalForce(
@@ -350,6 +373,67 @@ function addVector(target: [number, number, number], value: [number, number, num
   target[0] += value[0];
   target[1] += value[1];
   target[2] += value[2];
+}
+
+function nodeSetCentroid(model: LoadAssemblyModel, nodeSetName: string): [number, number, number] | undefined {
+  const nodeSet = model.nodeSets.find((set) => set.name === nodeSetName);
+  return nodeSet ? centroidForNodes(model, Array.from(nodeSet.nodes)) : undefined;
+}
+
+function surfaceSetCentroid(model: LoadAssemblyModel, surfaceSetName: string): [number, number, number] | undefined {
+  const surfaceSet = model.surfaceSets?.find((set) => set.name === surfaceSetName);
+  if (!surfaceSet) return undefined;
+  const surfaceFacets = (model.surfaceFacets ?? extractBoundarySurfaceFacets(model as OpenCAEModelJson)) as LoadSurfaceFacet[];
+  const facetById = new Map(surfaceFacets.map((facet) => [facet.id, facet]));
+  const nodes = new Set<number>();
+  for (const facetId of surfaceSet.facets) {
+    for (const node of facetById.get(facetId)?.nodes ?? []) nodes.add(node);
+  }
+  return centroidForNodes(model, [...nodes]);
+}
+
+function modelCentroid(model: LoadAssemblyModel): [number, number, number] {
+  return centroidForNodes(
+    model,
+    Array.from({ length: model.nodes.coordinates.length / 3 }, (_value, node) => node)
+  ) ?? [0, 0, 0];
+}
+
+function combinedLoadCentroid(
+  model: LoadAssemblyModel,
+  perLoad: LoadAssemblyPerLoadDiagnostics[]
+): [number, number, number] | undefined {
+  let totalWeight = 0;
+  let x = 0;
+  let y = 0;
+  let z = 0;
+  for (const load of perLoad) {
+    if (!load.loadCentroid) continue;
+    const weight = Math.max(load.totalAppliedForceMagnitude, 1);
+    x += load.loadCentroid[0] * weight;
+    y += load.loadCentroid[1] * weight;
+    z += load.loadCentroid[2] * weight;
+    totalWeight += weight;
+  }
+  if (totalWeight > 0) return [x / totalWeight, y / totalWeight, z / totalWeight];
+  return model.nodes.coordinates.length > 0 ? modelCentroid(model) : undefined;
+}
+
+function centroidForNodes(model: LoadAssemblyModel, nodes: number[]): [number, number, number] | undefined {
+  if (nodes.length === 0) return undefined;
+  let x = 0;
+  let y = 0;
+  let z = 0;
+  for (const node of nodes) {
+    x += coordinateAt(model.nodes.coordinates, node, 0);
+    y += coordinateAt(model.nodes.coordinates, node, 1);
+    z += coordinateAt(model.nodes.coordinates, node, 2);
+  }
+  return [x / nodes.length, y / nodes.length, z / nodes.length];
+}
+
+function vectorMagnitude(vector: [number, number, number]): number {
+  return Math.hypot(vector[0], vector[1], vector[2]);
 }
 
 function scaleVector(vector: [number, number, number], scale: number): [number, number, number] {

@@ -6,6 +6,7 @@ import {
   type ValidationIssue,
   type ValidationReport
 } from "./model-json";
+import { elementFaces } from "./mesh";
 import { computeTet4SignedVolume, connectedComponents, nodesPerElement } from "./topology";
 
 const COMPONENTS = new Set(["x", "y", "z"]);
@@ -51,13 +52,15 @@ export function validateModelJson(input: unknown): ValidationReport {
   );
   const nodeSetNames = validateNodeSets(input.nodeSets, nodeCount, errors);
   validateElementSets(input.elementSets, elementValidation.totalElements, errors);
-  const surfaceFacetIds = validateSurfaceFacets(input.surfaceFacets, elementValidation.totalElements, nodeCount, errors);
+  const surfaceFacetIds = validateSurfaceFacets(input.surfaceFacets, elementValidation.elements, nodeCount, errors);
   const surfaceSetNames = validateSurfaceSets(input.surfaceSets, surfaceFacetIds, errors);
   const boundaryConditionNames = validateBoundaryConditions(input.boundaryConditions, nodeSetNames, errors);
   const loadNames = validateLoads(input.loads, nodeSetNames, surfaceSetNames, errors);
   validateSteps(input.steps, boundaryConditionNames, loadNames, errors);
   validateCoordinateSystem(input.coordinateSystem, errors);
+  validateMeshProvenance(input.meshProvenance, errors);
   validateMeshConnections(input.meshConnections, errors);
+  validateDynamicMaterialDensity(input.steps, input.elementBlocks, materials.densityByName, errors);
 
   if (
     elementValidation.connectivityOk &&
@@ -110,14 +113,15 @@ function validateCoordinates(coordinates: unknown, errors: ValidationIssue[]): n
   return Math.floor(coordinates.length / 3);
 }
 
-function validateMaterials(materials: unknown, errors: ValidationIssue[]): { names: string[] } {
+function validateMaterials(materials: unknown, errors: ValidationIssue[]): { names: string[]; densityByName: Map<string, number | undefined> } {
   if (!Array.isArray(materials)) {
     errors.push(issue("invalid-materials", "materials must be an array.", "$.materials"));
-    return { names: [] };
+    return { names: [], densityByName: new Map() };
   }
 
   const names = new Set<string>();
   const validNames: string[] = [];
+  const densityByName = new Map<string, number | undefined>();
   materials.forEach((material, index) => {
     const path = `$.materials[${index}]`;
     if (!isRecord(material)) {
@@ -133,6 +137,7 @@ function validateMaterials(materials: unknown, errors: ValidationIssue[]): { nam
       }
       names.add(material.name);
       validNames.push(material.name);
+      densityByName.set(material.name, typeof material.density === "number" ? material.density : undefined);
     }
 
     if (material.type !== "isotropicLinearElastic") {
@@ -162,7 +167,7 @@ function validateMaterials(materials: unknown, errors: ValidationIssue[]): { nam
     }
   });
 
-  return { names: validNames };
+  return { names: validNames, densityByName };
 }
 
 function validateElementBlocks(
@@ -171,14 +176,20 @@ function validateElementBlocks(
   nodeCount: number,
   materialNames: Set<string>,
   errors: ValidationIssue[]
-): { totalElements: number; connectivityOk: boolean; blocks: { name: string; type: ElementType; material: string; connectivity: number[] }[] } {
+): {
+  totalElements: number;
+  connectivityOk: boolean;
+  blocks: { name: string; type: ElementType; material: string; connectivity: number[] }[];
+  elements: { type: ElementType; nodes: number[] }[];
+} {
   if (!Array.isArray(elementBlocks)) {
     errors.push(issue("invalid-element-blocks", "elementBlocks must be an array.", "$.elementBlocks"));
-    return { totalElements: 0, connectivityOk: false, blocks: [] };
+    return { totalElements: 0, connectivityOk: false, blocks: [], elements: [] };
   }
 
   const names = new Set<string>();
   const blocks: { name: string; type: ElementType; material: string; connectivity: number[] }[] = [];
+  const elements: { type: ElementType; nodes: number[] }[] = [];
   let totalElements = 0;
   let connectivityOk = true;
   elementBlocks.forEach((block, blockIndex) => {
@@ -247,6 +258,9 @@ function validateElementBlocks(
         }
       }
       connectivityOk = connectivityOk && elementIndicesOk;
+      if (element.length === nodesPer) {
+        elements.push({ type: elementType, nodes: element });
+      }
     }
 
     totalElements += Math.floor(block.connectivity.length / nodesPer);
@@ -258,7 +272,7 @@ function validateElementBlocks(
     });
   });
 
-  return { totalElements, connectivityOk, blocks };
+  return { totalElements, connectivityOk, blocks, elements };
 }
 
 function validateNodeSets(nodeSets: unknown, nodeCount: number, errors: ValidationIssue[]): Set<string> {
@@ -298,7 +312,7 @@ function validateElementSets(elementSets: unknown, elementCount: number, errors:
 
 function validateSurfaceFacets(
   surfaceFacets: unknown,
-  elementCount: number,
+  elements: { type: ElementType; nodes: number[] }[],
   nodeCount: number,
   errors: ValidationIssue[]
 ): Set<number> {
@@ -323,12 +337,21 @@ function validateSurfaceFacets(
       ids.add(id);
     }
     const element = facet.element;
-    if (!isInteger(element) || element < 0 || element >= elementCount) {
+    const ownerElement = isInteger(element) && element >= 0 && element < elements.length ? elements[element] : undefined;
+    if (!ownerElement) {
       errors.push(issue("surface-facet-element-out-of-range", "Surface facet element must reference an element.", `${path}.element`));
     }
     const elementFace = facet.elementFace;
     if (!isInteger(elementFace) || elementFace < 0) {
       errors.push(issue("invalid-surface-facet-face", "Surface facet elementFace must be a non-negative integer.", `${path}.elementFace`));
+    } else if (ownerElement) {
+      const faces = elementFaces(ownerElement.type, ownerElement.nodes);
+      const ownerFace = faces[elementFace];
+      if (!ownerFace) {
+        errors.push(issue("surface-facet-face-out-of-range", "Surface facet elementFace must reference an element face.", `${path}.elementFace`));
+      } else if (Array.isArray(facet.nodes)) {
+        validateSurfaceFacetMatchesOwnerFace(facet.nodes, ownerFace.nodes, `${path}.nodes`, errors);
+      }
     }
     if (!Array.isArray(facet.nodes) || facet.nodes.length < 3) {
       errors.push(issue("invalid-surface-facet-nodes", "Surface facet nodes must contain at least three nodes.", `${path}.nodes`));
@@ -348,6 +371,26 @@ function validateSurfaceFacets(
     validateOptionalVector3(facet.center, `${path}.center`, "invalid-surface-facet-center", errors);
   });
   return ids;
+}
+
+function validateSurfaceFacetMatchesOwnerFace(
+  facetNodes: unknown[],
+  ownerFaceNodes: number[],
+  path: string,
+  errors: ValidationIssue[]
+): void {
+  const facetNodeSet = new Set(facetNodes.filter(Number.isInteger) as number[]);
+  const ownerFaceNodeSet = new Set(ownerFaceNodes);
+  for (const node of facetNodeSet) {
+    if (!ownerFaceNodeSet.has(node)) {
+      errors.push(issue("surface-facet-node-not-on-element-face", "Surface facet nodes must belong to the referenced element face.", path));
+      return;
+    }
+  }
+  const requiredCornerNodes = ownerFaceNodes.slice(0, 3);
+  if (!requiredCornerNodes.every((node) => facetNodeSet.has(node))) {
+    errors.push(issue("surface-facet-node-mismatch", "Surface facet nodes must include the referenced element face corner nodes.", path));
+  }
 }
 
 function validateSurfaceSets(
@@ -536,6 +579,71 @@ function validateCoordinateSystem(coordinateSystem: unknown, errors: ValidationI
   ) {
     errors.push(issue("invalid-render-coordinate-space", "renderCoordinateSpace must be solver or display_model.", "$.coordinateSystem.renderCoordinateSpace"));
   }
+}
+
+function validateMeshProvenance(meshProvenance: unknown, errors: ValidationIssue[]): void {
+  if (meshProvenance === undefined) return;
+  if (!isRecord(meshProvenance)) {
+    errors.push(issue("invalid-mesh-provenance", "meshProvenance must be an object.", "$.meshProvenance"));
+    return;
+  }
+
+  const meshSources = new Set([
+    "actual_volume_mesh",
+    "structured_block_core",
+    "uploaded_volume_mesh",
+    "gmsh_volume_mesh",
+    "display_bounds_proxy"
+  ]);
+  if (typeof meshProvenance.meshSource !== "string" || !meshSources.has(meshProvenance.meshSource)) {
+    errors.push(issue("invalid-mesh-source", "meshSource must be a supported OpenCAE Core mesh source.", "$.meshProvenance.meshSource"));
+  }
+  if (meshProvenance.meshSource === "display_bounds_proxy") {
+    errors.push(
+      issue(
+        "display-bounds-proxy-not-production",
+        "Production OpenCAE Core solves require an actual volume mesh, not display_bounds_proxy.",
+        "$.meshProvenance.meshSource"
+      )
+    );
+  }
+  if (meshProvenance.kind === "local_estimate" || meshProvenance.resultSource === "computed_preview") {
+    errors.push(
+      issue(
+        "preview-provenance-not-allowed",
+        "Production OpenCAE Core models cannot use local_estimate or computed_preview provenance.",
+        "$.meshProvenance"
+      )
+    );
+  }
+  for (const key of ["solver", "resultSource", "kind"] as const) {
+    if (meshProvenance[key] !== undefined && typeof meshProvenance[key] !== "string") {
+      errors.push(issue("invalid-mesh-provenance-field", `${key} must be a string when provided.`, `$.meshProvenance.${key}`));
+    }
+  }
+}
+
+function validateDynamicMaterialDensity(
+  steps: unknown,
+  elementBlocks: unknown,
+  densityByName: Map<string, number | undefined>,
+  errors: ValidationIssue[]
+): void {
+  if (!Array.isArray(steps) || !steps.some((step) => isRecord(step) && step.type === "dynamicLinear")) return;
+  if (!Array.isArray(elementBlocks)) return;
+  elementBlocks.forEach((block, index) => {
+    if (!isRecord(block) || typeof block.material !== "string") return;
+    const density = densityByName.get(block.material);
+    if (!isFiniteNumber(density) || density <= 0) {
+      errors.push(
+        issue(
+          "missing-dynamic-material-density",
+          "Dynamic linear steps require positive material density for every solved element block.",
+          `$.elementBlocks[${index}].material`
+        )
+      );
+    }
+  });
 }
 
 function validateMeshConnections(meshConnections: unknown, errors: ValidationIssue[]): void {

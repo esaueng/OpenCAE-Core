@@ -90,7 +90,6 @@ export type MeshProvenanceJson = {
     | "structured_block_core"
     | "uploaded_volume_mesh"
     | "gmsh_volume_mesh"
-    | "structured_block"
     | "display_bounds_proxy";
   solver?: string;
   resultSource?: string;

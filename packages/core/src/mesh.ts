@@ -32,6 +32,13 @@ const TET_CORNER_FACES = [
   [0, 2, 1]
 ] as const;
 
+const TET10_FACES = [
+  [1, 2, 3, 5, 9, 8],
+  [0, 3, 2, 7, 9, 6],
+  [0, 1, 3, 4, 8, 7],
+  [0, 2, 1, 6, 5, 4]
+] as const;
+
 export function elementNodeCount(type: ElementType): number {
   return type === "Tet4" ? 4 : 10;
 }
@@ -53,10 +60,8 @@ export function tet4Volume(coordinates: ArrayLike<number>, nodeIds: ArrayLike<nu
 }
 
 export function elementFaces(type: ElementType, connectivity: ArrayLike<number>): ElementFace[] {
-  if (type !== "Tet4" && type !== "Tet10") {
-    return [];
-  }
-  return TET_CORNER_FACES.map((face, elementFace) => ({
+  const faces = type === "Tet10" ? TET10_FACES : type === "Tet4" ? TET_CORNER_FACES : [];
+  return faces.map((face, elementFace) => ({
     elementFace,
     nodes: face.map((localNode) => connectivity[localNode])
   }));

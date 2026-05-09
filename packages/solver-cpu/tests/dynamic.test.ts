@@ -1,7 +1,7 @@
 import { describe, expect, test } from "vitest";
 import { singleTetStaticFixture } from "@opencae/examples";
 import { validateCoreResult, type OpenCAEModelJson } from "@opencae/core";
-import { solveDynamicLinearTetMDOF, solveDynamicTet4Cpu, solveStaticLinearTet4Cpu } from "../src";
+import { solveDynamicLinearTetMDOF, solvePreviewSdofTet4Cpu, solveStaticLinearTet4Cpu } from "../src";
 
 const densityModel = {
   ...singleTetStaticFixture,
@@ -15,9 +15,9 @@ const densityModel = {
   ]
 } satisfies OpenCAEModelJson;
 
-describe("solveDynamicTet4Cpu preview", () => {
+describe("solvePreviewSdofTet4Cpu preview", () => {
   test("remains the preview SDOF dynamic approximation", () => {
-    const result = solveDynamicTet4Cpu(singleTetStaticFixture, {
+    const result = solvePreviewSdofTet4Cpu(singleTetStaticFixture, {
       endTime: 0.02,
       timeStep: 0.005,
       outputInterval: 0.01

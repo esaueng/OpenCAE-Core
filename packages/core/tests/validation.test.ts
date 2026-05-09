@@ -172,15 +172,21 @@ describe("validateModelJson", () => {
     const model = {
       ...createSingleTetModel(),
       schemaVersion: "0.2.0",
+      materials: [
+        {
+          ...createSingleTetModel().materials[0],
+          density: 7850
+        }
+      ],
       surfaceFacets: [
         {
           id: 10,
           element: 0,
           elementFace: 0,
-          nodes: [0, 2, 1],
-          area: 0.5,
-          normal: [0, 0, -1],
-          center: [1 / 3, 1 / 3, 0],
+          nodes: [1, 2, 3],
+          area: Math.sqrt(3) / 2,
+          normal: [1 / Math.sqrt(3), 1 / Math.sqrt(3), 1 / Math.sqrt(3)],
+          center: [1 / 3, 1 / 3, 1 / 3],
           sourceFaceId: "base"
         }
       ],
@@ -329,6 +335,12 @@ describe("validateModelJson", () => {
     const model = {
       ...createSingleTetModel(),
       schemaVersion: "0.2.0",
+      materials: [
+        {
+          ...createSingleTetModel().materials[0],
+          density: 7850
+        }
+      ],
       steps: [
         {
           name: "badTransient",
@@ -452,5 +464,55 @@ describe("validateModelJson", () => {
     expect(validateModelJson(unsupported).errors.map((issue) => issue.code)).toContain(
       "unsupported-element-type"
     );
+  });
+
+  test("rejects production display proxy and dynamic models without density", () => {
+    const model = {
+      ...createSingleTetModel(),
+      schemaVersion: "0.2.0",
+      meshProvenance: {
+        kind: "opencae_core_fea",
+        solver: "opencae-core-sparse-tet",
+        resultSource: "computed",
+        meshSource: "display_bounds_proxy"
+      },
+      steps: [
+        {
+          name: "transient",
+          type: "dynamicLinear",
+          boundaryConditions: ["fixedSupport"],
+          loads: ["tipLoad"],
+          startTime: 0,
+          endTime: 0.1,
+          timeStep: 0.01,
+          outputInterval: 0.01,
+          loadProfile: "ramp"
+        }
+      ]
+    };
+
+    const codes = validateModelJson(model).errors.map((issue) => issue.code);
+
+    expect(codes).toContain("display-bounds-proxy-not-production");
+    expect(codes).toContain("missing-dynamic-material-density");
+  });
+
+  test("rejects surface facets that do not match their referenced element face", () => {
+    const model = {
+      ...createSingleTetModel(),
+      schemaVersion: "0.2.0",
+      surfaceFacets: [
+        {
+          id: 1,
+          element: 0,
+          elementFace: 0,
+          nodes: [0, 1, 2]
+        }
+      ]
+    };
+
+    const codes = validateModelJson(model).errors.map((issue) => issue.code);
+
+    expect(codes).toContain("surface-facet-node-not-on-element-face");
   });
 });

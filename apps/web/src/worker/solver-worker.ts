@@ -1,4 +1,5 @@
 import { detectWebGPUCapability } from "@opencae/solver-webgpu";
+import { solveCoreDynamic, solveCoreStatic } from "@opencae/solver-cpu";
 import type { SolverWorkerRequest, SolverWorkerResponse } from "./messages";
 
 const workerSelf = self as unknown as {
@@ -28,6 +29,27 @@ async function handleMessage(message: SolverWorkerRequest): Promise<void> {
         type: "capability-response",
         requestId: message.requestId,
         capability: await detectWebGPUCapability()
+      });
+      return;
+    }
+
+    if (message.type === "solve-static" || message.type === "solve-dynamic") {
+      const solve =
+        message.type === "solve-static"
+          ? solveCoreStatic(message.model, message.options)
+          : solveCoreDynamic(message.model, message.options);
+      if (!solve.ok) {
+        workerSelf.postMessage({
+          type: "error",
+          requestId: message.requestId,
+          message: solve.error.message
+        });
+        return;
+      }
+      workerSelf.postMessage({
+        type: "solve-response",
+        requestId: message.requestId,
+        result: solve.result
       });
     }
   } catch (error) {

@@ -98,6 +98,7 @@ export type {
   CoreResultField,
   CoreResultValidationIssue,
   CoreResultValidationReport,
+  CoreSolveDiagnostics,
   CoreSolveResult,
   CoreSolveProvenance,
   CoreSolveSummary,

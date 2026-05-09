@@ -119,11 +119,12 @@ export function getNormalizedModel(input: CpuSolverInput):
 
   const result = normalizeModelJson(input);
   if (!result.ok) {
+    const densityError = result.report.errors.find((issue) => issue.code === "missing-dynamic-material-density");
     return {
       ok: false,
       error: {
         code: "validation-failed",
-        message: "Input model failed OpenCAE Core validation.",
+        message: densityError ? "Dynamic solve requires material density." : "Input model failed OpenCAE Core validation.",
         report: result.report
       }
     };

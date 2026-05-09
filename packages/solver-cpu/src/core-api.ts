@@ -20,7 +20,8 @@ export function solveCoreStatic(
   if (meshError) return meshError;
   const result = solveStaticLinearTet(model, {
     ...options,
-    method: options.method ?? options.solverMode ?? "auto"
+    method: "sparse",
+    solverMode: "sparse"
   });
   if (!result.ok) return result;
   const coreResult = result.result.coreResult;
@@ -111,7 +112,7 @@ export function solveCorePreviewDynamic(
     kind: "local_estimate" as const,
     solver: "opencae-core-preview-sdof" as const,
     resultSource: "computed_preview" as const,
-    meshSource: "structured_block" as const
+    meshSource: "structured_block_core" as const
   };
   const previewResult: PreviewDynamicResult = {
     ...result.result,
