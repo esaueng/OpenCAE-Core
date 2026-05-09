@@ -9,6 +9,7 @@ import {
   type MeshProvenanceJson,
   type NodeSetJson,
   type OpenCAEModelJson,
+  type PhysicalGroupJson,
   type StepJson,
   type SurfaceSetJson
 } from "./model-json";
@@ -26,6 +27,13 @@ export type VolumeMeshSurfaceSetInput =
       sourceFaceId?: string;
       sourceSelectionRef?: string;
     };
+
+type SurfaceSetBuildInput = {
+  name: string;
+  facets?: number[];
+  sourceFaceId?: string;
+  sourceSelectionRef?: string;
+};
 
 export type VolumeMeshToModelInput = {
   nodes: {
@@ -46,6 +54,7 @@ export type VolumeMeshToModelInput = {
     element: number;
     elementFace: number;
   }[];
+  physicalGroups?: PhysicalGroupJson[];
 };
 
 export type DisplayModelLike = {
@@ -69,8 +78,21 @@ export function volumeMeshToModelJson(input: VolumeMeshToModelInput): OpenCAEMod
     elementBlocks: input.elementBlocks,
     sourceFaces: input.sourceFaces
   });
-  const surfaceSets = (input.surfaceSets ?? []).map((surfaceSet) => {
-    if ("facets" in surfaceSet) return surfaceSet;
+  const surfaceSetInputs: SurfaceSetBuildInput[] = [
+    ...(input.surfaceSets ?? []).map((surfaceSet) => ({ ...surfaceSet })),
+    ...(input.physicalGroups ?? [])
+      .filter((group) => group.dimension === 2)
+      .map((group) => ({
+        name: group.name,
+        facets: group.facets,
+        sourceFaceId: group.sourceFaceId,
+        sourceSelectionRef: group.sourceSelectionRef
+      }))
+  ];
+  const surfaceSets = surfaceSetInputs.map((surfaceSet) => {
+    if ("facets" in surfaceSet && surfaceSet.facets !== undefined) {
+      return { name: surfaceSet.name, facets: [...surfaceSet.facets] };
+    }
     const selectionRef = surfaceSet.sourceSelectionRef ?? surfaceSet.sourceFaceId;
     if (!selectionRef) {
       return { name: surfaceSet.name, facets: surfaceFacets.map((facet) => facet.id) };
@@ -112,7 +134,11 @@ export function volumeMeshToModelJson(input: VolumeMeshToModelInput): OpenCAEMod
           return Array.from({ length: count }, (_, index) => prior + index);
         })
       }
-    ],
+    ].concat(
+      (input.physicalGroups ?? [])
+        .filter((group) => group.dimension === 3 && group.elements !== undefined)
+        .map((group) => ({ name: group.name, elements: [...(group.elements ?? [])] }))
+    ),
     surfaceFacets,
     surfaceSets,
     boundaryConditions: input.boundaryConditions?.map((bc) => ({ ...bc })) ?? [],

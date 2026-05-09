@@ -78,6 +78,10 @@ export function solvePreviewSdofTet4Cpu(
       timeStep,
       outputInterval,
       dampingRatio: options.dampingRatio ?? 0,
+      rayleighAlpha: options.rayleighAlpha ?? 0,
+      rayleighBeta: options.rayleighBeta ?? 0,
+      newmarkGamma: 0.5,
+      newmarkBeta: 0.25,
       loadProfile,
       equivalentMass: options.massDensity ?? 0,
       equivalentStiffness: 0,
@@ -93,6 +97,12 @@ export function solvePreviewSdofTet4Cpu(
         relativeResidual: 0
       })),
       totalMass: options.massDensity ?? 0,
+      reactionBalance: frames.map((frame) => ({
+        frameIndex: frame.frameIndex,
+        timeSeconds: frame.timeSeconds,
+        loadScale: frame.loadScale,
+        relativeImbalance: 0
+      })),
       solver: "opencae-core-preview-sdof"
     }
   };

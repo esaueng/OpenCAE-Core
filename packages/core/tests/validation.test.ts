@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import type { BodyGravityLoadJson, DynamicLinearStepJson } from "../src/model-json";
-import { validateModelJson } from "../src/validation";
+import { preflightCoreModel, validateModelJson } from "../src/validation";
 import { createSingleTetModel, createTwoTetModel } from "./fixtures";
 
 describe("validateModelJson", () => {
@@ -514,5 +514,48 @@ describe("validateModelJson", () => {
     const codes = validateModelJson(model).errors.map((issue) => issue.code);
 
     expect(codes).toContain("surface-facet-node-not-on-element-face");
+  });
+
+  test("preflight reports topology, surface mapping, and force balance readiness", () => {
+    const model = createSingleTetModel();
+    const report = preflightCoreModel(model, { stepIndex: 0 });
+
+    expect(report.ok).toBe(true);
+    expect(report.diagnostics.connectedComponentCount).toBe(1);
+    expect(report.diagnostics.orphanNodeCount).toBe(0);
+    expect(report.diagnostics.surfaceFacetCount).toBeGreaterThan(0);
+    expect(report.diagnostics.fixedNodeCount).toBeGreaterThan(0);
+    expect(report.diagnostics.loadNodeCount).toBeGreaterThan(0);
+    expect(report.diagnostics.totalLoadVectorN).toEqual([0, 0, -100]);
+  });
+
+  test("preflight rejects orphan nodes and missing production surface selections", () => {
+    const model = {
+      ...createSingleTetModel(),
+      schemaVersion: "0.2.0",
+      nodes: {
+        coordinates: [...createSingleTetModel().nodes.coordinates, 9, 9, 9]
+      },
+      surfaceSets: [],
+      loads: [
+        {
+          name: "tipLoad",
+          type: "nodalForce",
+          nodeSet: "freeNodes",
+          vector: [0, 0, -100]
+        }
+      ]
+    };
+
+    const report = preflightCoreModel(model, { requireSurfaceSelections: true });
+
+    expect(report.ok).toBe(false);
+    expect(report.errors.map((issue) => issue.code)).toEqual(
+      expect.arrayContaining([
+        "orphan-nodes",
+        "missing-support-surface-set",
+        "missing-load-surface-set"
+      ])
+    );
   });
 });

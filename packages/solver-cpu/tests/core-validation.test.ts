@@ -246,9 +246,16 @@ describe("Core validation suite static benchmarks", () => {
     expect(diagnostic?.loadCentroid[0]).toBeCloseTo(0.18, 12);
     expect(diagnostic?.effectiveLeverArmMm).toBeCloseTo(180, 8);
     expect(diagnostic?.stressByBeamAxisBin).toHaveLength(20);
+    expect(diagnostic?.stressByBeamAxisBin[0]).toEqual(
+      expect.objectContaining({
+        axisCenter: expect.any(Number),
+        meanStressMpa: expect.any(Number),
+        maxStressMpa: expect.any(Number)
+      })
+    );
     const populatedBins = diagnostic?.stressByBeamAxisBin.filter((bin) => bin.nodeCount > 0) ?? [];
     expect(populatedBins.length).toBeGreaterThan(4);
-    expect(populatedBins[0]?.maxStress).toBeGreaterThan((populatedBins.at(-1)?.maxStress ?? 0) * 1.4);
+    expect(populatedBins[0]?.maxStressMpa).toBeGreaterThan((populatedBins.at(-1)?.maxStressMpa ?? 0) * 1.4);
     expect(diagnostic?.warnings).not.toContain("Stress field has an abrupt spatial discontinuity; verify surface node mapping and load/support selection.");
 
     const coreDiagnostic = coreResult?.diagnostics.find(isCoreSolveDiagnostic);
@@ -257,6 +264,38 @@ describe("Core validation suite static benchmarks", () => {
     expect(coreDiagnostic?.rawMaxStressPa).toBeGreaterThan(0);
     expect(coreDiagnostic?.fieldSurfaceAlignment).toBe("ok");
     expect(coreDiagnostic?.solverMethod).toBe("opencae-core-sparse-tet");
+  });
+
+  test("visualization smoothing is explicit and does not change engineering max stress", () => {
+    const model = createStructuredCantileverModel({
+      length: 0.18,
+      width: 0.024,
+      height: 0.024,
+      force: 500,
+      xDivisions: 8,
+      yDivisions: 2,
+      zDivisions: 2
+    });
+
+    const raw = solveStaticLinearTet(model, { method: "sparse", tolerance: 1e-10, maxIterations: 20000 });
+    const smoothed = solveStaticLinearTet(model, {
+      method: "sparse",
+      tolerance: 1e-10,
+      maxIterations: 20000,
+      visualizationSmoothing: { iterations: 1, alpha: 0.25 }
+    });
+
+    expect(raw.ok).toBe(true);
+    expect(smoothed.ok).toBe(true);
+    if (!raw.ok || !smoothed.ok) return;
+    const rawStress = raw.result.coreResult?.fields.find((field) => field.id === "stress-surface");
+    const smoothedStress = smoothed.result.coreResult?.fields.find((field) => field.id === "stress-surface");
+    const smoothedDiagnostic = smoothed.result.coreResult?.diagnostics.find(isStressVisualizationDiagnostic);
+
+    expect(smoothed.result.coreResult?.summary.maxStress).toBe(raw.result.coreResult?.summary.maxStress);
+    expect(smoothedStress?.visualizationSource).toBe("volume_weighted_nodal_recovery_laplacian_smoothed");
+    expect(smoothedDiagnostic?.stressRecoveryMethod).toBe("volume_weighted_nodal_recovery_laplacian_smoothed");
+    expect(smoothedStress?.values).not.toEqual(rawStress?.values);
   });
 
   test("pressure patch total force equals pressure times area and balances reactions", () => {
@@ -389,6 +428,25 @@ describe("Core validation suite dynamic benchmarks", () => {
       )
     );
     expect(signatures.size).toBeGreaterThan(1);
+  });
+
+  test("dynamic diagnostics expose Rayleigh coefficients and frame reaction balance", () => {
+    const result = solveDynamicLinearTetMDOF(dynamicLoadedModel("ramp"), {
+      rayleighAlpha: 0.3,
+      rayleighBeta: 0.002,
+      endTime: 0.02,
+      timeStep: 0.005,
+      outputInterval: 0.01
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.diagnostics.rayleighAlpha).toBe(0.3);
+    expect(result.diagnostics.rayleighBeta).toBe(0.002);
+    expect(result.diagnostics.newmarkGamma).toBe(0.5);
+    expect(result.diagnostics.newmarkBeta).toBe(0.25);
+    expect(result.diagnostics.reactionBalance.every((entry) => Number.isFinite(entry.relativeImbalance))).toBe(true);
+    expect(result.diagnostics.reactionBalance.at(-1)?.relativeImbalance).toBeLessThan(1e-6);
   });
 
   test("dynamic validation fails for missing density and excessive frame budget", () => {
@@ -750,7 +808,13 @@ function isStressVisualizationDiagnostic(value: unknown): value is {
   fixedCentroid: [number, number, number];
   loadCentroid: [number, number, number];
   effectiveLeverArmMm: number;
-  stressByBeamAxisBin: Array<{ bin: number; xCenter: number; meanStress: number; maxStress: number; nodeCount: number }>;
+  stressByBeamAxisBin: Array<{
+    bin: number;
+    axisCenter: number;
+    meanStressMpa: number;
+    maxStressMpa: number;
+    nodeCount: number;
+  }>;
   warnings: string[];
 } {
   return (
@@ -759,7 +823,10 @@ function isStressVisualizationDiagnostic(value: unknown): value is {
     "id" in value &&
     (value as { id?: unknown }).id === "stress-visualization" &&
     "stressRecoveryMethod" in value &&
-    (value as { stressRecoveryMethod?: unknown }).stressRecoveryMethod === "volume_weighted_nodal_recovery"
+    (
+      (value as { stressRecoveryMethod?: unknown }).stressRecoveryMethod === "volume_weighted_nodal_recovery" ||
+      (value as { stressRecoveryMethod?: unknown }).stressRecoveryMethod === "volume_weighted_nodal_recovery_laplacian_smoothed"
+    )
   );
 }
 

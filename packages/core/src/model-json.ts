@@ -102,6 +102,16 @@ export type MeshConnectionJson = {
   target: string;
 };
 
+export type PhysicalGroupJson = {
+  name: string;
+  dimension: 2 | 3;
+  sourceSelectionRef?: string;
+  sourceFaceId?: string;
+  facets?: number[];
+  elements?: number[];
+  material?: string;
+};
+
 export type BoundaryConditionJson = FixedBoundaryConditionJson | PrescribedDisplacementBoundaryConditionJson;
 
 export type FixedBoundaryConditionJson = {

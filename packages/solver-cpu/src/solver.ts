@@ -277,7 +277,8 @@ function solveDenseSystem(
   return finishSolve(model, loads, constraints, free, solve.solution, multiplyDenseMatrixVector(stiffness, dofs), {
     solverMode: "dense",
     iterations: freeDofs,
-    converged: true
+    converged: true,
+    visualizationSmoothing: options.visualizationSmoothing
   });
 }
 
@@ -310,7 +311,8 @@ function solveSparseSystem(
   return finishSolve(model, loads, constraints, free, solve.solution, (displacement) => csrMatVec(stiffness, displacement), {
     solverMode: "sparse",
     iterations: solve.iterations,
-    converged: true
+    converged: true,
+    visualizationSmoothing: options.visualizationSmoothing
   });
 }
 
@@ -321,7 +323,7 @@ function finishSolve(
   free: Int32Array,
   freeSolution: Float64Array,
   multiplyFull: (displacement: Float64Array) => Float64Array,
-  diagnostics: Pick<CpuSolverDiagnostics, "solverMode" | "iterations" | "converged">
+  diagnostics: Pick<CpuSolverDiagnostics, "solverMode" | "iterations" | "converged" | "visualizationSmoothing">
 ): StaticLinearTet4CpuSolveResult {
   const dofs = model.counts.nodes * 3;
   const displacement = new Float64Array(dofs);

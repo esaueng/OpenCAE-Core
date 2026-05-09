@@ -26,6 +26,7 @@ export type {
   NormalizedSurfaceSet,
   NormalizedTet4ElementBlock,
   OpenCAEModelJson,
+  PhysicalGroupJson,
   PressureLoadJson,
   PrescribedDisplacementBoundaryConditionJson,
   ResultFieldJson,
@@ -90,6 +91,11 @@ export type {
   LoadAssemblyPerLoadDiagnostics,
   LoadAssemblyResult
 } from "./loads";
+export type {
+  CoreModelPreflightDiagnostics,
+  CoreModelPreflightOptions,
+  CoreModelPreflightReport
+} from "./validation";
 export {
   assembleNodalLoadVector,
   assembleNodalLoadVectorWithDiagnostics
@@ -111,4 +117,4 @@ export {
   validateCoreResult
 } from "./results";
 export { normalizeModelJson } from "./normalize";
-export { validateModelJson } from "./validation";
+export { preflightCoreModel, validateModelJson } from "./validation";

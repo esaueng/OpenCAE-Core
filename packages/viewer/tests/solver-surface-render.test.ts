@@ -41,4 +41,42 @@ describe("buildSolverSurfaceRenderGeometry", () => {
 
     expect(() => buildSolverSurfaceRenderGeometry(badResult)).toThrow(/surface node count/i);
   });
+
+  test("rejects element stress, missing surface references, missing nodeMap, and mismatched displacement vectors", () => {
+    const result = solveCoreStatic(singleTetStaticFixture);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const elementStress = result.result.fields.find((field) => field.id === "stress-von-mises-element")!;
+    expect(() => buildSolverSurfaceRenderGeometry(result.result, elementStress.id)).toThrow(/node field/i);
+
+    const missingReference = {
+      ...result.result,
+      fields: result.result.fields.map((field) =>
+        field.id === "stress-surface"
+          ? { ...field, surfaceMeshRef: undefined }
+          : field
+      )
+    };
+    expect(() => buildSolverSurfaceRenderGeometry(missingReference)).toThrow(/solver surface mesh/i);
+
+    const missingNodeMap = {
+      ...result.result,
+      surfaceMesh: {
+        ...result.result.surfaceMesh!,
+        nodeMap: undefined
+      }
+    };
+    expect(() => buildSolverSurfaceRenderGeometry(missingNodeMap)).toThrow(/nodeMap/i);
+
+    const badDisplacement = {
+      ...result.result,
+      fields: result.result.fields.map((field) =>
+        field.id === "displacement-surface"
+          ? { ...field, vectors: field.vectors?.slice(1) }
+          : field
+      )
+    };
+    expect(() => buildSolverSurfaceRenderGeometry(badDisplacement)).toThrow(/vectors/i);
+  });
 });

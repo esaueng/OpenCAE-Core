@@ -131,4 +131,48 @@ describe("actual volume mesh adapter", () => {
     expect(surface.surfaceTriangles.length).toBe(12);
     expect(surface.coordinateSpace).toBe("solver");
   });
+
+  test("preserves imported physical groups as material, element, and surface identity", () => {
+    const model = volumeMeshToModelJson({
+      nodes: { coordinates },
+      materials: [
+        {
+          name: "steel",
+          type: "isotropicLinearElastic",
+          youngModulus: 210e9,
+          poissonRatio: 0.3
+        }
+      ],
+      elementBlocks: [
+        {
+          name: "solid",
+          type: "Tet4",
+          material: "steel",
+          connectivity: [0, 1, 2, 3]
+        }
+      ],
+      physicalGroups: [
+        { name: "fixed_face", dimension: 2, sourceSelectionRef: "base" },
+        { name: "solid_region", dimension: 3, elements: [0], material: "steel" }
+      ],
+      sourceFaces: [
+        {
+          sourceSelectionRef: "base",
+          element: 0,
+          elementFace: 0
+        }
+      ],
+      meshProvenance: {
+        kind: "opencae_core_fea",
+        solver: "gmsh",
+        resultSource: "computed",
+        meshSource: "gmsh_volume_mesh"
+      }
+    });
+
+    expect(model.meshProvenance?.meshSource).toBe("gmsh_volume_mesh");
+    expect(model.surfaceSets?.find((set) => set.name === "fixed_face")?.facets).toEqual([0]);
+    expect(model.elementSets.find((set) => set.name === "solid_region")?.elements).toEqual([0]);
+    expect(model.elementBlocks[0].material).toBe("steel");
+  });
 });

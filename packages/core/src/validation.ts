@@ -2,11 +2,13 @@ import {
   OPENCAE_LEGACY_MODEL_SCHEMA_VERSION,
   OPENCAE_MODEL_SCHEMA,
   OPENCAE_MODEL_SCHEMA_VERSION,
+  type OpenCAEModelJson,
   type ElementType,
   type ValidationIssue,
   type ValidationReport
 } from "./model-json";
-import { elementFaces } from "./mesh";
+import { assembleNodalLoadVectorWithDiagnostics } from "./loads";
+import { elementFaces, extractBoundarySurfaceFacets, nodeSetFromSurfaceSet, orphanNodes } from "./mesh";
 import { computeTet4SignedVolume, connectedComponents, nodesPerElement } from "./topology";
 
 const COMPONENTS = new Set(["x", "y", "z"]);
@@ -80,6 +82,83 @@ export function validateModelJson(input: unknown): ValidationReport {
   }
 
   return report(errors);
+}
+
+export type CoreModelPreflightOptions = {
+  stepIndex?: number;
+  requireSurfaceSelections?: boolean;
+};
+
+export type CoreModelPreflightDiagnostics = {
+  nodeCount: number;
+  elementCount: number;
+  surfaceFacetCount: number;
+  connectedComponentCount: number;
+  orphanNodeCount: number;
+  fixedNodeCount: number;
+  loadNodeCount: number;
+  totalLoadVectorN: [number, number, number];
+};
+
+export type CoreModelPreflightReport = {
+  ok: boolean;
+  diagnostics: CoreModelPreflightDiagnostics;
+  errors: ValidationIssue[];
+  warnings: ValidationIssue[];
+};
+
+export function preflightCoreModel(
+  model: OpenCAEModelJson,
+  options: CoreModelPreflightOptions = {}
+): CoreModelPreflightReport {
+  const validation = validateModelJson(model);
+  const errors: ValidationIssue[] = [...validation.errors];
+  const warnings: ValidationIssue[] = [...validation.warnings];
+  const elementCount = countElements(model.elementBlocks);
+  const facets = model.surfaceFacets ?? extractBoundarySurfaceFacets(model);
+  const components = connectedComponents(model);
+  const orphans = orphanNodes(model);
+  const step = model.steps[options.stepIndex ?? 0];
+  const fixedNodes = step ? activeBoundaryNodes(model, step.boundaryConditions) : new Set<number>();
+  const loadNodes = step ? activeLoadNodes(model, step.loads, facets) : new Set<number>();
+  const loadDiagnostics = step ? assembleNodalLoadVectorWithDiagnostics({ ...model, surfaceFacets: facets }, step.loads).diagnostics : undefined;
+
+  if (orphans.length > 0) {
+    errors.push(issue("orphan-nodes", "Production preflight requires all nodes to belong to at least one element.", "$.nodes"));
+  }
+  if (components.componentCount > 1 && (!Array.isArray(model.meshConnections) || model.meshConnections.length === 0)) {
+    errors.push(issue("disconnected-bodies-without-connections", "Production preflight requires one connected component unless mesh connections are defined.", "$.elementBlocks"));
+  }
+  if (facets.length === 0) {
+    errors.push(issue("missing-surface-facets", "Production preflight requires solver surface facets.", "$.surfaceFacets"));
+  }
+  if (options.requireSurfaceSelections && step) {
+    if (!hasBoundarySurfaceSelection(model, step.boundaryConditions, facets)) {
+      errors.push(issue("missing-support-surface-set", "Production supports must map to a non-empty surface set.", "$.boundaryConditions"));
+    }
+    if (!hasLoadSurfaceSelection(model, step.loads)) {
+      errors.push(issue("missing-load-surface-set", "Production loads must map to a non-empty surface set.", "$.loads"));
+    }
+  }
+  for (const loadError of loadDiagnostics?.errors ?? []) {
+    errors.push(issue(loadError.code, loadError.message, "$.loads"));
+  }
+
+  return {
+    ok: errors.length === 0,
+    diagnostics: {
+      nodeCount: Math.floor(model.nodes.coordinates.length / 3),
+      elementCount,
+      surfaceFacetCount: facets.length,
+      connectedComponentCount: components.componentCount,
+      orphanNodeCount: orphans.length,
+      fixedNodeCount: fixedNodes.size,
+      loadNodeCount: loadNodes.size,
+      totalLoadVectorN: loadDiagnostics?.totalAppliedForce ?? [0, 0, 0]
+    },
+    errors,
+    warnings
+  };
 }
 
 function validateCoordinates(coordinates: unknown, errors: ValidationIssue[]): number {
@@ -664,6 +743,74 @@ function validateMeshConnections(meshConnections: unknown, errors: ValidationIss
     if (!isNonEmptyString(connection.source)) errors.push(issue("invalid-mesh-connection-source", "Mesh connection source must be a string.", `${path}.source`));
     if (!isNonEmptyString(connection.target)) errors.push(issue("invalid-mesh-connection-target", "Mesh connection target must be a string.", `${path}.target`));
   });
+}
+
+function countElements(elementBlocks: OpenCAEModelJson["elementBlocks"]): number {
+  return elementBlocks.reduce((sum, block) => sum + Math.floor(block.connectivity.length / nodesPerElement(block.type)), 0);
+}
+
+function activeBoundaryNodes(model: OpenCAEModelJson, boundaryConditionNames: string[]): Set<number> {
+  const active = new Set(boundaryConditionNames);
+  const nodeSets = new Map(model.nodeSets.map((set) => [set.name, set.nodes]));
+  const nodes = new Set<number>();
+  for (const condition of model.boundaryConditions) {
+    if (!active.has(condition.name)) continue;
+    for (const node of nodeSets.get(condition.nodeSet) ?? []) nodes.add(node);
+  }
+  return nodes;
+}
+
+function activeLoadNodes(model: OpenCAEModelJson, loadNames: string[], facets = model.surfaceFacets ?? []): Set<number> {
+  const active = new Set(loadNames);
+  const nodeSets = new Map(model.nodeSets.map((set) => [set.name, set.nodes]));
+  const surfaceSets = new Map((model.surfaceSets ?? []).map((set) => [set.name, set]));
+  const facetById = new Map(facets.map((facet) => [facet.id, facet]));
+  const nodes = new Set<number>();
+  for (const load of model.loads) {
+    if (!active.has(load.name)) continue;
+    if (load.type === "nodalForce") {
+      for (const node of nodeSets.get(load.nodeSet) ?? []) nodes.add(node);
+    } else if (load.type === "surfaceForce" || load.type === "pressure") {
+      const surfaceSet = surfaceSets.get(load.surfaceSet);
+      for (const facetId of surfaceSet?.facets ?? []) {
+        for (const node of facetById.get(facetId)?.nodes ?? []) nodes.add(node);
+      }
+    } else if (load.type === "bodyGravity") {
+      for (let node = 0; node < Math.floor(model.nodes.coordinates.length / 3); node += 1) nodes.add(node);
+    }
+  }
+  return nodes;
+}
+
+function hasBoundarySurfaceSelection(model: OpenCAEModelJson, boundaryConditionNames: string[], facets: OpenCAEModelJson["surfaceFacets"] = []): boolean {
+  const boundaryNodes = activeBoundaryNodes(model, boundaryConditionNames);
+  if (boundaryNodes.size === 0) return false;
+  for (const surfaceSet of model.surfaceSets ?? []) {
+    const surfaceNodes = new Set(nodeSetFromSurfaceSet(surfaceSet, facets));
+    if (surfaceNodes.size > 0 && isSubset(boundaryNodes, surfaceNodes)) return true;
+  }
+  return false;
+}
+
+function hasLoadSurfaceSelection(model: OpenCAEModelJson, loadNames: string[]): boolean {
+  const active = new Set(loadNames);
+  const surfaceSets = new Map((model.surfaceSets ?? []).map((set) => [set.name, set]));
+  let sawLoad = false;
+  for (const load of model.loads) {
+    if (!active.has(load.name)) continue;
+    sawLoad = true;
+    if ((load.type === "surfaceForce" || load.type === "pressure") && (surfaceSets.get(load.surfaceSet)?.facets.length ?? 0) > 0) {
+      return true;
+    }
+  }
+  return !sawLoad;
+}
+
+function isSubset(candidate: Set<number>, container: Set<number>): boolean {
+  for (const value of candidate) {
+    if (!container.has(value)) return false;
+  }
+  return true;
 }
 
 function validateNamedIndexSet(

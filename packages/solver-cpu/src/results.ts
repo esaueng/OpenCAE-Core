@@ -13,6 +13,7 @@ import {
   type NormalizedOpenCAEModel,
   type SolverSurfaceMesh
 } from "@opencae/core";
+import { smoothNodalScalarField } from "./element";
 import { recoverNodalVonMisesFromElements } from "./recovery";
 import type { DynamicTet4CpuResult, DynamicTet4CpuDiagnostics, StaticLinearTet4CpuResult, CpuSolverDiagnostics } from "./types";
 
@@ -36,9 +37,10 @@ export function staticCoreResultFromSolve(
   const surfaceDisplacement = surfaceVectorMagnitudes(surfaceMesh, result.displacement, displacementScale);
   const surfaceDisplacementVectors = surfaceNodeVectors(surfaceMesh, result.displacement, displacementScale);
   const recoveredNodalVonMises = recoverNodalVonMisesFromElements(model, result.vonMises);
+  const visualizationStress = visualizationStressValues(model, recoveredNodalVonMises, diagnostics.visualizationSmoothing);
   const surfaceVonMises = surfaceNodeScalars(
     surfaceMesh,
-    recoveredNodalVonMises,
+    visualizationStress.values,
     stressScale
   );
   const displacementSurfaceField = createCoreResultField({
@@ -58,7 +60,7 @@ export function staticCoreResultFromSolve(
     values: surfaceVonMises,
     units: "MPa",
     surfaceMeshRef: surfaceMesh.id,
-    visualizationSource: "volume_weighted_nodal_recovery",
+    visualizationSource: visualizationStress.source,
     engineeringSource: "raw_element_von_mises"
   });
   const fields: CoreResultField[] = [
@@ -388,6 +390,29 @@ function scaleValues(values: ArrayLike<number>, scale: number): number[] {
   return Array.from(values, (value) => value * scale);
 }
 
+function visualizationStressValues(
+  model: NormalizedOpenCAEModel,
+  recoveredNodalVonMises: Float64Array,
+  smoothing: CpuSolverDiagnostics["visualizationSmoothing"]
+): { values: Float64Array; source: string } {
+  const iterations = Math.max(0, Math.floor(smoothing?.iterations ?? 0));
+  const alpha = Math.max(0, Math.min(1, smoothing?.alpha ?? 0));
+  if (iterations <= 0 || alpha <= 0) {
+    return { values: recoveredNodalVonMises, source: "volume_weighted_nodal_recovery" };
+  }
+
+  let current = Float64Array.from(recoveredNodalVonMises);
+  for (let iteration = 0; iteration < iterations; iteration += 1) {
+    const averaged = smoothNodalScalarField(model, current, 1);
+    const next = new Float64Array(current.length);
+    for (let index = 0; index < current.length; index += 1) {
+      next[index] = (1 - alpha) * current[index] + alpha * averaged[index];
+    }
+    current = next;
+  }
+  return { values: current, source: "volume_weighted_nodal_recovery_laplacian_smoothed" };
+}
+
 function surfaceVectorMagnitudes(surfaceMesh: SolverSurfaceMesh, vector: Float64Array, scale: number): number[] {
   return surfaceMesh.nodeMap.map((volumeNode, surfaceNode) => {
     const [x, y, z] = vectorComponentsForVolumeNode(vector, volumeNode, surfaceNode, "vector");
@@ -459,9 +484,9 @@ type NodeSelectionSummary = {
 
 type StressBeamAxisBin = {
   bin: number;
-  xCenter: number;
-  meanStress: number;
-  maxStress: number;
+  axisCenter: number;
+  meanStressMpa: number;
+  maxStressMpa: number;
   nodeCount: number;
 };
 
@@ -480,7 +505,7 @@ function stressVisualizationDiagnostic(
   stressFieldLocation: CoreResultField["location"];
   surfaceMeshRef: string | undefined;
   visualizationSource: string | undefined;
-  stressRecoveryMethod: "volume_weighted_nodal_recovery";
+  stressRecoveryMethod: "volume_weighted_nodal_recovery" | "volume_weighted_nodal_recovery_laplacian_smoothed";
   surfaceNodeCount: number;
   surfaceTriangleCount: number;
   stressFieldValueCount: number;
@@ -509,7 +534,10 @@ function stressVisualizationDiagnostic(
     stressFieldLocation: stressField.location,
     surfaceMeshRef: stressField.surfaceMeshRef,
     visualizationSource: stressField.visualizationSource,
-    stressRecoveryMethod: "volume_weighted_nodal_recovery",
+    stressRecoveryMethod:
+      stressField.visualizationSource === "volume_weighted_nodal_recovery_laplacian_smoothed"
+        ? "volume_weighted_nodal_recovery_laplacian_smoothed"
+        : "volume_weighted_nodal_recovery",
     surfaceNodeCount: surfaceMesh.nodes.length,
     surfaceTriangleCount: surfaceMesh.triangles.length,
     stressFieldValueCount: stressField.values.length,
@@ -575,6 +603,8 @@ function coreSolveDiagnostics(
     plotStressMaxMpa: stressDiagnostic.plotStressMaxMpa,
     stressRecoveryMethod: stressDiagnostic.stressRecoveryMethod,
     fieldSurfaceAlignment: stressDiagnostic.fieldSurfaceAlignment,
+    stressFieldValueCount: stressDiagnostic.stressFieldValueCount,
+    displacementFieldValueCount: stressDiagnostic.displacementFieldValueCount,
     stressByBeamAxisBin: stressDiagnostic.stressByBeamAxisBin
   };
 }
@@ -666,9 +696,9 @@ function stressBinsByBeamAxis(
   const count = Math.max(1, Math.floor(binCount));
   const bins = Array.from({ length: count }, (_value, bin) => ({
     bin,
-    xCenter: span > 0 ? min + ((bin + 0.5) / count) * span : min,
+    axisCenter: span > 0 ? min + ((bin + 0.5) / count) * span : min,
     sum: 0,
-    maxStress: Number.NEGATIVE_INFINITY,
+    maxStressMpa: Number.NEGATIVE_INFINITY,
     nodeCount: 0
   }));
 
@@ -680,15 +710,15 @@ function stressBinsByBeamAxis(
     const bin = Math.max(0, Math.min(count - 1, Math.floor(station * count)));
     const target = bins[bin];
     target.sum += value;
-    target.maxStress = Math.max(target.maxStress, value);
+    target.maxStressMpa = Math.max(target.maxStressMpa, value);
     target.nodeCount += 1;
   }
 
   return bins.map((bin) => ({
     bin: bin.bin,
-    xCenter: bin.xCenter,
-    meanStress: bin.nodeCount > 0 ? bin.sum / bin.nodeCount : 0,
-    maxStress: bin.nodeCount > 0 ? bin.maxStress : 0,
+    axisCenter: bin.axisCenter,
+    meanStressMpa: bin.nodeCount > 0 ? bin.sum / bin.nodeCount : 0,
+    maxStressMpa: bin.nodeCount > 0 ? bin.maxStressMpa : 0,
     nodeCount: bin.nodeCount
   }));
 }
@@ -712,7 +742,7 @@ function stressVisualizationWarnings(
 function hasAbruptStressDiscontinuity(bins: StressBeamAxisBin[]): boolean {
   const populated = bins.filter((bin) => bin.nodeCount > 0);
   if (populated.length < 4) return false;
-  const means = populated.map((bin) => bin.meanStress);
+  const means = populated.map((bin) => bin.meanStressMpa);
   const min = Math.min(...means);
   const max = Math.max(...means);
   const range = max - min;

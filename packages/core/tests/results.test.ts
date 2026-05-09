@@ -24,6 +24,7 @@ describe("Core result structures", () => {
   });
 
   test("validates finite non-empty fields and surface mesh triangle references", () => {
+    const surfaceMesh = solverSurfaceMeshFromModel(createSingleTetModel());
     const result: CoreSolveResult = {
       summary: {
         maxStress: 10,
@@ -42,7 +43,7 @@ describe("Core result structures", () => {
       },
       fields: [
         {
-          id: "displacement",
+          id: "displacement-surface",
           type: "displacement",
           location: "node",
           values: [0, 0.1, 0.2, 0.3],
@@ -50,10 +51,38 @@ describe("Core result structures", () => {
           max: 0.3,
           units: "mm",
           surfaceMeshRef: "solver-surface"
+        },
+        {
+          id: "stress-surface",
+          type: "stress",
+          location: "node",
+          values: [1, 2, 3, 4],
+          min: 1,
+          max: 4,
+          units: "MPa",
+          surfaceMeshRef: "solver-surface"
+        },
+        {
+          id: "stress-von-mises-element",
+          type: "stress",
+          location: "element",
+          values: [4],
+          min: 4,
+          max: 4,
+          units: "MPa",
+          meshRef: "solver-volume"
         }
       ],
-      surfaceMesh: solverSurfaceMeshFromModel(createSingleTetModel()),
-      diagnostics: [],
+      surfaceMesh,
+      diagnostics: [
+        {
+          id: "core-solve-diagnostics",
+          fieldSurfaceAlignment: "ok",
+          surfaceNodeCount: surfaceMesh.nodes.length,
+          stressFieldValueCount: surfaceMesh.nodes.length,
+          displacementFieldValueCount: surfaceMesh.nodes.length
+        }
+      ],
       provenance: {
         kind: "opencae_core_fea",
         solver: "opencae-core-sparse-tet",
@@ -64,6 +93,56 @@ describe("Core result structures", () => {
     };
 
     expect(validateCoreResult(result).ok).toBe(true);
+  });
+
+  test("rejects production results missing solver surface mesh, required fields, and solve diagnostics", () => {
+    const result: CoreSolveResult = {
+      summary: {
+        maxStress: 10,
+        maxStressUnits: "MPa",
+        maxDisplacement: 0.1,
+        maxDisplacementUnits: "mm",
+        reactionForce: 5,
+        reactionForceUnits: "N",
+        provenance: {
+          kind: "opencae_core_fea",
+          solver: "opencae-core-sparse-tet",
+          resultSource: "computed",
+          meshSource: "actual_volume_mesh",
+          units: "mm-N-s-MPa"
+        }
+      },
+      fields: [
+        {
+          id: "stress-surface",
+          type: "stress",
+          location: "node",
+          values: [1, 2, 3, 4],
+          min: 1,
+          max: 4,
+          units: "MPa"
+        }
+      ],
+      diagnostics: [],
+      provenance: {
+        kind: "opencae_core_fea",
+        solver: "opencae-core-sparse-tet",
+        resultSource: "computed",
+        meshSource: "actual_volume_mesh",
+        units: "mm-N-s-MPa"
+      }
+    };
+
+    const report = validateCoreResult(result);
+
+    expect(report.ok).toBe(false);
+    expect(report.errors.map((error) => error.code)).toEqual(
+      expect.arrayContaining([
+        "missing-surface-mesh",
+        "missing-required-result-field",
+        "missing-core-solve-diagnostics"
+      ])
+    );
   });
 
   test("rejects empty fields, non-finite values, bad min/max, and invalid triangles", () => {

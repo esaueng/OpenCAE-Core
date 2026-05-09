@@ -168,6 +168,10 @@ export function solveDynamicMdofTet4Cpu(
     timeStep: settings.timeStep,
     outputInterval: settings.outputInterval,
     dampingRatio: settings.dampingRatio,
+    rayleighAlpha,
+    rayleighBeta,
+    newmarkGamma: 0.5,
+    newmarkBeta: 0.25,
     loadProfile: settings.loadProfile,
     equivalentMass,
     equivalentStiffness,
@@ -178,6 +182,12 @@ export function solveDynamicMdofTet4Cpu(
     minSafetyFactor,
     convergence,
     totalMass: lumpedMassResult.totalMass,
+    reactionBalance: convergence.map((entry) => ({
+      frameIndex: entry.frameIndex,
+      timeSeconds: entry.timeSeconds,
+      loadScale: loadScaleAt(entry.timeSeconds, settings),
+      relativeImbalance: entry.relativeResidual
+    })),
     solver: "opencae-core-mdof-newmark"
   };
 

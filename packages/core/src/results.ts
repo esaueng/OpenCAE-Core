@@ -99,12 +99,14 @@ export type CoreSolveDiagnostics = {
   plotStressMinMpa: number;
   plotStressMaxMpa: number;
   stressRecoveryMethod: string;
-  fieldSurfaceAlignment: "ok" | "mismatch";
+  fieldSurfaceAlignment: "ok" | "invalid";
+  stressFieldValueCount: number;
+  displacementFieldValueCount: number;
   stressByBeamAxisBin: Array<{
     bin: number;
-    xCenter: number;
-    meanStress: number;
-    maxStress: number;
+    axisCenter: number;
+    meanStressMpa: number;
+    maxStressMpa: number;
     nodeCount: number;
   }>;
 };
@@ -208,19 +210,88 @@ export function validateCoreResult(result: CoreSolveResult): CoreResultValidatio
   validateSummary(result.summary, errors);
   validateProvenance(result.provenance, errors);
 
+  if (!result.surfaceMesh) {
+    errors.push(issue("missing-surface-mesh", "Production Core results must include the solver surface mesh.", "surfaceMesh"));
+  }
+
   if (!Array.isArray(result.fields) || result.fields.length === 0) {
     errors.push(issue("empty-fields", "Core result must contain at least one field.", "fields"));
   } else {
     result.fields.forEach((field, index) => validateField(field, index, result.surfaceMesh, errors));
+    validateRequiredProductionFields(result, errors);
   }
 
   if (result.surfaceMesh) validateSurfaceMesh(result.surfaceMesh, errors);
+  validateRequiredDiagnostics(result, errors);
 
   return {
     ok: errors.length === 0,
     errors,
     warnings: []
   };
+}
+
+function validateRequiredProductionFields(result: CoreSolveResult, errors: CoreResultValidationIssue[]): void {
+  const transient = result.summary.transient !== undefined;
+  const fields = new Map(result.fields.map((field) => [field.id, field]));
+  if (!transient) {
+    requireField(fields, "displacement-surface", "displacement", "node", errors);
+    requireField(fields, "stress-surface", "stress", "node", errors);
+    requireField(fields, "stress-von-mises-element", "stress", "element", errors);
+    return;
+  }
+
+  if (!result.fields.some((field) => field.type === "displacement" && field.location === "node" && field.surfaceMeshRef === result.surfaceMesh?.id)) {
+    errors.push(issue("missing-required-result-field", "Dynamic Core results must include node displacement fields on the solver surface mesh.", "fields"));
+  }
+  if (!result.fields.some((field) => field.type === "stress" && field.location === "node" && field.surfaceMeshRef === result.surfaceMesh?.id)) {
+    errors.push(issue("missing-required-result-field", "Dynamic Core results must include recovered node stress fields on the solver surface mesh.", "fields"));
+  }
+  if (!result.fields.some((field) => field.type === "stress" && field.location === "element" && field.surfaceMeshRef === undefined)) {
+    errors.push(issue("missing-required-result-field", "Dynamic Core results must include raw element engineering stress fields.", "fields"));
+  }
+}
+
+function requireField(
+  fields: Map<string, CoreResultField>,
+  id: string,
+  type: CoreResultField["type"],
+  location: CoreResultField["location"],
+  errors: CoreResultValidationIssue[]
+): void {
+  const field = fields.get(id);
+  if (!field) {
+    errors.push(issue("missing-required-result-field", `Production Core result field ${id} is required.`, "fields"));
+    return;
+  }
+  if (field.type !== type || field.location !== location) {
+    errors.push(issue("required-result-field-shape-mismatch", `Production Core result field ${id} has the wrong type or location.`, `fields.${id}`));
+  }
+}
+
+function validateRequiredDiagnostics(result: CoreSolveResult, errors: CoreResultValidationIssue[]): void {
+  const diagnostic = result.diagnostics.find(
+    (candidate): candidate is { id: "core-solve-diagnostics"; fieldSurfaceAlignment?: unknown; stressFieldValueCount?: unknown; displacementFieldValueCount?: unknown; surfaceNodeCount?: unknown } =>
+      !!candidate &&
+      typeof candidate === "object" &&
+      (candidate as { id?: unknown }).id === "core-solve-diagnostics"
+  );
+  if (!diagnostic) {
+    errors.push(issue("missing-core-solve-diagnostics", "Production Core results must include core-solve-diagnostics.", "diagnostics"));
+    return;
+  }
+  if (diagnostic.fieldSurfaceAlignment !== "ok") {
+    errors.push(issue("invalid-field-surface-alignment", "Core solve diagnostics must report ok field surface alignment.", "diagnostics.core-solve-diagnostics.fieldSurfaceAlignment"));
+  }
+  const surfaceNodeCount = result.surfaceMesh?.nodes.length;
+  if (
+    surfaceNodeCount !== undefined &&
+    (diagnostic.surfaceNodeCount !== surfaceNodeCount ||
+      diagnostic.stressFieldValueCount !== surfaceNodeCount ||
+      diagnostic.displacementFieldValueCount !== surfaceNodeCount)
+  ) {
+    errors.push(issue("diagnostic-surface-field-count-mismatch", "Core solve diagnostics must match solver surface field counts.", "diagnostics.core-solve-diagnostics"));
+  }
 }
 
 function validateProvenance(provenance: CoreSolveProvenance, errors: CoreResultValidationIssue[]): void {

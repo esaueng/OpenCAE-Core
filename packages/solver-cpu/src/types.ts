@@ -10,6 +10,10 @@ export type CpuSolverOptions = {
   method?: "auto" | "dense" | "sparse";
   tolerance?: number;
   maxIterations?: number;
+  visualizationSmoothing?: {
+    iterations?: number;
+    alpha?: number;
+  };
 };
 
 export type DynamicLoadProfile = "step" | "ramp" | "quasiStatic" | "quasi_static" | "sinusoidal";
@@ -45,6 +49,10 @@ export type CpuSolverDiagnostics = {
   solverMode?: "dense" | "sparse";
   iterations?: number;
   converged?: boolean;
+  visualizationSmoothing?: {
+    iterations?: number;
+    alpha?: number;
+  };
 };
 
 export type StaticLinearTet4CpuResult = {
@@ -113,6 +121,10 @@ export type DynamicTet4CpuDiagnostics = CpuSolverDiagnostics & {
   timeStep: number;
   outputInterval: number;
   dampingRatio: number;
+  rayleighAlpha: number;
+  rayleighBeta: number;
+  newmarkGamma: 0.5;
+  newmarkBeta: 0.25;
   loadProfile: DynamicLoadProfile;
   equivalentMass: number;
   equivalentStiffness: number;
@@ -129,6 +141,12 @@ export type DynamicTet4CpuDiagnostics = CpuSolverDiagnostics & {
     relativeResidual: number;
   }[];
   totalMass: number;
+  reactionBalance: {
+    frameIndex: number;
+    timeSeconds: number;
+    loadScale: number;
+    relativeImbalance: number;
+  }[];
   solver: "opencae-core-mdof-newmark" | "opencae-core-preview-sdof";
 };
 

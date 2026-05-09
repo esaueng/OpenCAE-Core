@@ -24,6 +24,9 @@ export function buildSolverSurfaceRenderGeometry(
   if (!surfaceMesh) {
     throw new Error("Core result does not include a solver surface mesh.");
   }
+  if (!Array.isArray(surfaceMesh.nodeMap) || surfaceMesh.nodeMap.length !== surfaceMesh.nodes.length) {
+    throw new Error("Core result solver surface mesh nodeMap must align one-to-one with surface nodes.");
+  }
 
   const field = findSurfaceNodeField(result, fieldId);
   assertSurfaceFieldAlignment(field, surfaceMesh.id, surfaceMesh.nodes.length);
