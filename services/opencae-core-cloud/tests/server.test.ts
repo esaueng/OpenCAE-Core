@@ -1,7 +1,7 @@
 import { describe, expect, test } from "vitest";
 import { singleTetStaticFixture } from "@opencae/examples";
-import type { OpenCAEModelJson } from "@opencae/core";
-import { healthResponse, solveResponse } from "../src/server";
+import { solverSurfaceMeshFromModel, validateCoreResult, type CoreSolveResult, type OpenCAEModelJson } from "@opencae/core";
+import { coreResultValidationFailureMessage, healthResponse, solveResponse } from "../src/server";
 
 const densityModel = {
   ...singleTetStaticFixture,
@@ -99,6 +99,51 @@ describe("OpenCAE Core Cloud runner", () => {
     expect(elementStress?.location).toBe("element");
     expect(elementStress?.surfaceMeshRef).toBeUndefined();
     expect(elementStress?.samples).toBeUndefined();
+  });
+
+  test("uses exact surface field mismatch message for result validation failures", () => {
+    const surfaceMesh = solverSurfaceMeshFromModel(singleTetStaticFixture);
+    const report = validateCoreResult({
+      summary: {
+        maxStress: 10,
+        maxStressUnits: "Pa",
+        maxDisplacement: 0.1,
+        maxDisplacementUnits: "m",
+        reactionForce: 5,
+        reactionForceUnits: "N",
+        provenance: {
+          kind: "opencae_core_fea",
+          solver: "opencae-core-sparse-tet",
+          resultSource: "computed",
+          meshSource: "actual_volume_mesh",
+          units: "m-N-s-Pa"
+        }
+      },
+      fields: [
+        {
+          id: "stress-surface",
+          type: "stress",
+          location: "node",
+          values: [1],
+          min: 1,
+          max: 1,
+          units: "MPa",
+          surfaceMeshRef: surfaceMesh.id
+        }
+      ],
+      surfaceMesh,
+      diagnostics: [],
+      provenance: {
+        kind: "opencae_core_fea",
+        solver: "opencae-core-sparse-tet",
+        resultSource: "computed",
+        meshSource: "actual_volume_mesh",
+        units: "m-N-s-Pa"
+      }
+    } satisfies CoreSolveResult);
+
+    expect(report.ok).toBe(false);
+    expect(coreResultValidationFailureMessage(report)).toBe("Solver surface field length does not match surface mesh node count.");
   });
 
   test("solves dynamic Core models with MDOF production provenance", () => {

@@ -13,6 +13,7 @@ export type SolverSurfaceMesh = {
   coordinateSpace: "solver" | "display_model";
   source: "opencae_core_volume_mesh";
   nodeMap: number[];
+  volumeNodeCount?: number;
 };
 
 export type CoreResultField = {
@@ -100,6 +101,7 @@ export function solverSurfaceMeshFromModel(
   id = "solver-surface"
 ): SolverSurfaceMesh {
   const coordinates = model.nodes.coordinates;
+  const volumeNodeCount = Math.floor(coordinates.length / 3);
   const facets = collectSurfaceFacets(model);
   const surfaceNodeByVolumeNode = new Map<number, number>();
   const nodes: [number, number, number][] = [];
@@ -114,24 +116,23 @@ export function solverSurfaceMeshFromModel(
       const surfaceNode = nodes.length;
       surfaceNodeByVolumeNode.set(volumeNode, surfaceNode);
       nodeMap.push(volumeNode);
-      nodes.push([
-        coordinates[volumeNode * 3] ?? 0,
-        coordinates[volumeNode * 3 + 1] ?? 0,
-        coordinates[volumeNode * 3 + 2] ?? 0
-      ]);
+      nodes.push(surfaceNodeCoordinates(coordinates, volumeNode, volumeNodeCount));
       return surfaceNode;
     });
     triangles.push(triangle as [number, number, number]);
   }
 
-  return {
+  const surfaceMesh: SolverSurfaceMesh = {
     id,
     nodes,
     triangles,
     coordinateSpace: model.coordinateSystem?.renderCoordinateSpace ?? "solver",
     source: "opencae_core_volume_mesh",
-    nodeMap
+    nodeMap,
+    volumeNodeCount
   };
+  assertValidSurfaceMesh(surfaceMesh);
+  return surfaceMesh;
 }
 
 export function createCoreResultField(
@@ -280,7 +281,7 @@ function validateField(
         errors.push(issue("surface-field-location-mismatch", "Surface mesh fields must be node fields.", `${path}.location`));
       }
       if (field.values.length !== surfaceMesh.nodes.length) {
-        errors.push(issue("surface-field-length-mismatch", "Surface mesh node fields must contain exactly one value per surface node.", `${path}.values`));
+        errors.push(issue("surface-field-length-mismatch", "Solver surface field length does not match surface mesh node count.", `${path}.values`));
       }
       if (field.samples !== undefined && field.samples.length !== surfaceMesh.nodes.length) {
         errors.push(issue("surface-field-sample-length-mismatch", "Surface mesh field samples must align one-to-one with surface nodes.", `${path}.samples`));
@@ -323,8 +324,50 @@ function validateSurfaceMesh(surfaceMesh: SolverSurfaceMesh, errors: CoreResultV
   surfaceMesh.nodeMap.forEach((volumeNode, index) => {
     if (!Number.isInteger(volumeNode) || volumeNode < 0) {
       errors.push(issue("invalid-surface-node-map", "Surface mesh nodeMap entries must be non-negative node ids.", `surfaceMesh.nodeMap[${index}]`));
+    } else if (surfaceMesh.volumeNodeCount !== undefined && volumeNode >= surfaceMesh.volumeNodeCount) {
+      errors.push(issue("invalid-surface-node-map", "Surface mesh nodeMap entries must reference existing volume nodes.", `surfaceMesh.nodeMap[${index}]`));
     }
   });
+}
+
+function surfaceNodeCoordinates(
+  coordinates: ArrayLike<number>,
+  volumeNode: number,
+  volumeNodeCount: number
+): [number, number, number] {
+  if (!Number.isInteger(volumeNode) || volumeNode < 0 || volumeNode >= volumeNodeCount) {
+    throw new Error(`Surface mesh facet references invalid volume node ${volumeNode}.`);
+  }
+  const offset = volumeNode * 3;
+  const point: [number, number, number] = [
+    coordinates[offset],
+    coordinates[offset + 1],
+    coordinates[offset + 2]
+  ];
+  if (!point.every(Number.isFinite)) {
+    throw new Error(`Surface mesh facet references non-finite coordinates for volume node ${volumeNode}.`);
+  }
+  return point;
+}
+
+function assertValidSurfaceMesh(surfaceMesh: SolverSurfaceMesh): void {
+  if (surfaceMesh.nodeMap.length !== surfaceMesh.nodes.length) {
+    throw new Error("Surface mesh nodeMap must align one-to-one with surface nodes.");
+  }
+  const volumeNodeCount = surfaceMesh.volumeNodeCount ?? Number.POSITIVE_INFINITY;
+  for (let index = 0; index < surfaceMesh.nodeMap.length; index += 1) {
+    const volumeNode = surfaceMesh.nodeMap[index];
+    if (!Number.isInteger(volumeNode) || volumeNode < 0 || volumeNode >= volumeNodeCount) {
+      throw new Error(`Surface mesh nodeMap entry ${index} references invalid volume node ${volumeNode}.`);
+    }
+  }
+  for (let triangleIndex = 0; triangleIndex < surfaceMesh.triangles.length; triangleIndex += 1) {
+    for (const surfaceNode of surfaceMesh.triangles[triangleIndex]) {
+      if (!Number.isInteger(surfaceNode) || surfaceNode < 0 || surfaceNode >= surfaceMesh.nodes.length) {
+        throw new Error(`Surface mesh triangle ${triangleIndex} references invalid surface node ${surfaceNode}.`);
+      }
+    }
+  }
 }
 
 function requiresFrameMetadata(field: CoreResultField): boolean {

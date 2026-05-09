@@ -1,4 +1,5 @@
 import {
+  assembleNodalLoadVectorWithDiagnostics,
   createCoreResultField,
   solverSurfaceMeshFromModel,
   type BoundaryConditionJson,
@@ -32,27 +33,29 @@ export function staticCoreResultFromSolve(
     recoveredNodalVonMises,
     stressScale
   );
+  const displacementSurfaceField = createCoreResultField({
+    id: "displacement-surface",
+    type: "displacement",
+    location: "node",
+    values: surfaceDisplacement,
+    vectors: surfaceDisplacementVectors,
+    units: "mm",
+    surfaceMeshRef: surfaceMesh.id,
+    visualizationSource: "surface_displacement_vector"
+  });
+  const stressSurfaceField = createCoreResultField({
+    id: "stress-surface",
+    type: "stress",
+    location: "node",
+    values: surfaceVonMises,
+    units: "MPa",
+    surfaceMeshRef: surfaceMesh.id,
+    visualizationSource: "volume_weighted_nodal_recovery",
+    engineeringSource: "raw_element_von_mises"
+  });
   const fields: CoreResultField[] = [
-    createCoreResultField({
-      id: "displacement-surface",
-      type: "displacement",
-      location: "node",
-      values: surfaceDisplacement,
-      vectors: surfaceDisplacementVectors,
-      units: "mm",
-      surfaceMeshRef: surfaceMesh.id,
-      visualizationSource: "surface_displacement_vector"
-    }),
-    createCoreResultField({
-      id: "stress-surface",
-      type: "stress",
-      location: "node",
-      values: surfaceVonMises,
-      units: "MPa",
-      surfaceMeshRef: surfaceMesh.id,
-      visualizationSource: "volume_weighted_nodal_recovery",
-      engineeringSource: "raw_element_von_mises"
-    }),
+    displacementSurfaceField,
+    stressSurfaceField,
     createCoreResultField({
       id: "stress-von-mises-element",
       type: "stress",
@@ -81,8 +84,9 @@ export function staticCoreResultFromSolve(
   const stressDiagnostic = stressVisualizationDiagnostic(
     model,
     surfaceMesh,
-    surfaceVonMises,
-    surfaceDisplacement,
+    stressSurfaceField,
+    displacementSurfaceField,
+    result.reactionForce,
     maxAbs(result.vonMises) * stressScale
   );
   const resultDiagnostics: unknown[] = [{ ...diagnostics }, stressDiagnostic];
@@ -122,6 +126,8 @@ export function dynamicCoreResultFromSolve(
   const fields: CoreResultField[] = [];
   let latestSurfaceVonMises: number[] = [];
   let latestSurfaceDisplacement: number[] = [];
+  let latestStressSurfaceField: CoreResultField | undefined;
+  let latestDisplacementSurfaceField: CoreResultField | undefined;
   const displacementScale = lengthToMmScale(model);
   const stressScale = stressToMpaScale(model);
   for (const frame of result.frames) {
@@ -137,19 +143,34 @@ export function dynamicCoreResultFromSolve(
     );
     latestSurfaceVonMises = surfaceVonMises;
     latestSurfaceDisplacement = surfaceDisplacement;
+    const displacementSurfaceField = createCoreResultField({
+      id: `frame-${frame.frameIndex}-displacement-surface`,
+      type: "displacement",
+      location: "node",
+      values: surfaceDisplacement,
+      vectors: surfaceDisplacementVectors,
+      units: "mm",
+      surfaceMeshRef: surfaceMesh.id,
+      frameIndex: frame.frameIndex,
+      timeSeconds: frame.timeSeconds,
+      visualizationSource: "surface_displacement_vector"
+    });
+    const stressSurfaceField = createCoreResultField({
+      id: `frame-${frame.frameIndex}-stress-surface`,
+      type: "stress",
+      location: "node",
+      values: surfaceVonMises,
+      units: "MPa",
+      surfaceMeshRef: surfaceMesh.id,
+      frameIndex: frame.frameIndex,
+      timeSeconds: frame.timeSeconds,
+      visualizationSource: "volume_weighted_nodal_recovery",
+      engineeringSource: "raw_element_von_mises"
+    });
+    latestDisplacementSurfaceField = displacementSurfaceField;
+    latestStressSurfaceField = stressSurfaceField;
     fields.push(
-      createCoreResultField({
-        id: `frame-${frame.frameIndex}-displacement-surface`,
-        type: "displacement",
-        location: "node",
-        values: surfaceDisplacement,
-        vectors: surfaceDisplacementVectors,
-        units: "mm",
-        surfaceMeshRef: surfaceMesh.id,
-        frameIndex: frame.frameIndex,
-        timeSeconds: frame.timeSeconds,
-        visualizationSource: "surface_displacement_vector"
-      }),
+      displacementSurfaceField,
       createCoreResultField({
         id: `frame-${frame.frameIndex}-velocity`,
         type: "velocity",
@@ -172,18 +193,7 @@ export function dynamicCoreResultFromSolve(
         timeSeconds: frame.timeSeconds,
         visualizationSource: "surface_acceleration_magnitude"
       }),
-      createCoreResultField({
-        id: `frame-${frame.frameIndex}-stress-surface`,
-        type: "stress",
-        location: "node",
-        values: surfaceVonMises,
-        units: "MPa",
-        surfaceMeshRef: surfaceMesh.id,
-        frameIndex: frame.frameIndex,
-        timeSeconds: frame.timeSeconds,
-        visualizationSource: "volume_weighted_nodal_recovery",
-        engineeringSource: "raw_element_von_mises"
-      }),
+      stressSurfaceField,
       createCoreResultField({
         id: `frame-${frame.frameIndex}-stress-von-mises-element`,
         type: "stress",
@@ -244,8 +254,26 @@ export function dynamicCoreResultFromSolve(
       stressVisualizationDiagnostic(
         model,
         surfaceMesh,
-        latestSurfaceVonMises,
-        latestSurfaceDisplacement,
+        latestStressSurfaceField ?? createCoreResultField({
+          id: "stress-surface-empty",
+          type: "stress",
+          location: "node",
+          values: latestSurfaceVonMises,
+          units: "MPa",
+          surfaceMeshRef: surfaceMesh.id,
+          visualizationSource: "volume_weighted_nodal_recovery",
+          engineeringSource: "raw_element_von_mises"
+        }),
+        latestDisplacementSurfaceField ?? createCoreResultField({
+          id: "displacement-surface-empty",
+          type: "displacement",
+          location: "node",
+          values: latestSurfaceDisplacement,
+          units: "mm",
+          surfaceMeshRef: surfaceMesh.id,
+          visualizationSource: "surface_displacement_vector"
+        }),
+        result.frames.at(-1)?.reactionForce,
         diagnostics.maxVonMisesStress * stressScale
       )
     ],
@@ -323,9 +351,9 @@ function stressToMpaScale(model: NormalizedOpenCAEModel): number {
 }
 
 function surfaceVectorMagnitudes(surfaceMesh: SolverSurfaceMesh, vector: Float64Array, scale: number): number[] {
-  return surfaceMesh.nodeMap.map((volumeNode) => {
-    const offset = volumeNode * 3;
-    return Math.hypot(vector[offset] ?? 0, vector[offset + 1] ?? 0, vector[offset + 2] ?? 0) * scale;
+  return surfaceMesh.nodeMap.map((volumeNode, surfaceNode) => {
+    const [x, y, z] = vectorComponentsForVolumeNode(vector, volumeNode, surfaceNode, "vector");
+    return Math.hypot(x, y, z) * scale;
   });
 }
 
@@ -334,58 +362,130 @@ function surfaceNodeVectors(
   vector: Float64Array,
   scale: number
 ): [number, number, number][] {
-  return surfaceMesh.nodeMap.map((volumeNode) => {
-    const offset = volumeNode * 3;
+  return surfaceMesh.nodeMap.map((volumeNode, surfaceNode) => {
+    const [x, y, z] = vectorComponentsForVolumeNode(vector, volumeNode, surfaceNode, "vector");
     return [
-      (vector[offset] ?? 0) * scale,
-      (vector[offset + 1] ?? 0) * scale,
-      (vector[offset + 2] ?? 0) * scale
+      x * scale,
+      y * scale,
+      z * scale
     ];
   });
 }
 
 function surfaceNodeScalars(surfaceMesh: SolverSurfaceMesh, nodalValues: Float64Array, scale: number): number[] {
-  return surfaceMesh.nodeMap.map((volumeNode) => (nodalValues[volumeNode] ?? 0) * scale);
+  return surfaceMesh.nodeMap.map((volumeNode, surfaceNode) => {
+    assertValidSurfaceVolumeNode(surfaceMesh, volumeNode, surfaceNode);
+    const value = nodalValues[volumeNode];
+    if (!Number.isFinite(value)) {
+      throw new Error(`Surface scalar field cannot read volume node ${volumeNode} for surface node ${surfaceNode}.`);
+    }
+    return value * scale;
+  });
 }
+
+function vectorComponentsForVolumeNode(
+  vector: Float64Array,
+  volumeNode: number,
+  surfaceNode: number,
+  fieldName: string
+): [number, number, number] {
+  if (!Number.isInteger(volumeNode) || volumeNode < 0) {
+    throw new Error(`Surface ${fieldName} field references invalid volume node ${volumeNode} for surface node ${surfaceNode}.`);
+  }
+  const offset = volumeNode * 3;
+  if (offset + 2 >= vector.length) {
+    throw new Error(`Surface ${fieldName} field cannot read volume node ${volumeNode} for surface node ${surfaceNode}.`);
+  }
+  const components: [number, number, number] = [vector[offset], vector[offset + 1], vector[offset + 2]];
+  if (!components.every(Number.isFinite)) {
+    throw new Error(`Surface ${fieldName} field read non-finite vector components for volume node ${volumeNode}.`);
+  }
+  return components;
+}
+
+function assertValidSurfaceVolumeNode(surfaceMesh: SolverSurfaceMesh, volumeNode: number, surfaceNode: number): void {
+  const volumeNodeCount = surfaceMesh.volumeNodeCount;
+  if (
+    !Number.isInteger(volumeNode) ||
+    volumeNode < 0 ||
+    (volumeNodeCount !== undefined && volumeNode >= volumeNodeCount)
+  ) {
+    throw new Error(`Surface field references invalid volume node ${volumeNode} for surface node ${surfaceNode}.`);
+  }
+}
+
+type NodeSelectionSummary = {
+  count: number;
+  centroid: [number, number, number];
+};
+
+type StressBeamAxisBin = {
+  bin: number;
+  xCenter: number;
+  meanStress: number;
+  maxStress: number;
+  nodeCount: number;
+};
 
 function stressVisualizationDiagnostic(
   model: NormalizedOpenCAEModel,
   surfaceMesh: SolverSurfaceMesh,
-  plotValues: number[],
-  displacementValues: number[],
+  stressField: CoreResultField,
+  displacementField: CoreResultField,
+  reactionForce: Float64Array | undefined,
   engineeringStressMaxMpa: number
 ): {
   id: "stress-visualization";
   engineeringStressMaxMpa: number;
   plotStressMinMpa: number;
   plotStressMaxMpa: number;
+  stressFieldLocation: CoreResultField["location"];
+  surfaceMeshRef: string | undefined;
+  visualizationSource: string | undefined;
   stressRecoveryMethod: "volume_weighted_nodal_recovery";
   surfaceNodeCount: number;
   surfaceTriangleCount: number;
   stressFieldValueCount: number;
   displacementFieldValueCount: number;
   fieldSurfaceAlignment: "ok";
+  fixedNodeCount: number;
+  loadNodeCount: number;
+  appliedLoadVector: [number, number, number];
+  reactionVector: [number, number, number];
   fixedCentroid: [number, number, number];
   loadCentroid: [number, number, number];
   effectiveLeverArmMm: number;
+  stressByBeamAxisBin: StressBeamAxisBin[];
+  warnings: string[];
 } {
   const activeStep = firstStructuralStep(model);
-  const fixedCentroid = centroidForBoundaryConditions(model, activeStep?.boundaryConditions ?? []);
-  const loadCentroid = centroidForLoads(model, activeStep?.loads ?? []);
+  const fixedSelection = nodeSelectionForBoundaryConditions(model, activeStep?.boundaryConditions ?? []);
+  const loadSelection = nodeSelectionForLoads(model, activeStep?.loads ?? []);
+  const stressByBeamAxisBin = stressBinsByBeamAxis(model, surfaceMesh, stressField.values, 20);
+  const warnings = stressVisualizationWarnings(model, stressByBeamAxisBin, fixedSelection, loadSelection);
   return {
     id: "stress-visualization",
     engineeringStressMaxMpa,
-    plotStressMinMpa: plotValues.length > 0 ? Math.min(...plotValues) : 0,
-    plotStressMaxMpa: plotValues.length > 0 ? Math.max(...plotValues) : 0,
+    plotStressMinMpa: stressField.values.length > 0 ? Math.min(...stressField.values) : 0,
+    plotStressMaxMpa: stressField.values.length > 0 ? Math.max(...stressField.values) : 0,
+    stressFieldLocation: stressField.location,
+    surfaceMeshRef: stressField.surfaceMeshRef,
+    visualizationSource: stressField.visualizationSource,
     stressRecoveryMethod: "volume_weighted_nodal_recovery",
     surfaceNodeCount: surfaceMesh.nodes.length,
     surfaceTriangleCount: surfaceMesh.triangles.length,
-    stressFieldValueCount: plotValues.length,
-    displacementFieldValueCount: displacementValues.length,
+    stressFieldValueCount: stressField.values.length,
+    displacementFieldValueCount: displacementField.values.length,
     fieldSurfaceAlignment: "ok",
-    fixedCentroid,
-    loadCentroid,
-    effectiveLeverArmMm: distance(fixedCentroid, loadCentroid) * lengthToMmScale(model)
+    fixedNodeCount: fixedSelection.count,
+    loadNodeCount: loadSelection.count,
+    appliedLoadVector: activeStep ? appliedLoadVectorForStep(model, activeStep.loads) : [0, 0, 0],
+    reactionVector: vectorSum(reactionForce),
+    fixedCentroid: fixedSelection.centroid,
+    loadCentroid: loadSelection.centroid,
+    effectiveLeverArmMm: distance(fixedSelection.centroid, loadSelection.centroid) * lengthToMmScale(model),
+    stressByBeamAxisBin,
+    warnings
   };
 }
 
@@ -393,7 +493,7 @@ function firstStructuralStep(model: NormalizedOpenCAEModel): { boundaryCondition
   return model.steps.find((step) => step.type === "staticLinear" || step.type === "dynamicLinear");
 }
 
-function centroidForBoundaryConditions(model: NormalizedOpenCAEModel, boundaryConditionNames: string[]): [number, number, number] {
+function nodeSelectionForBoundaryConditions(model: NormalizedOpenCAEModel, boundaryConditionNames: string[]): NodeSelectionSummary {
   const active = new Set(boundaryConditionNames);
   const nodeSetNames = new Set<string>();
   for (const boundaryCondition of model.boundaryConditions) {
@@ -401,17 +501,19 @@ function centroidForBoundaryConditions(model: NormalizedOpenCAEModel, boundaryCo
       nodeSetNames.add(boundaryCondition.nodeSet);
     }
   }
-  return centroidForNodeSetNames(model, nodeSetNames);
+  const nodeIds = new Set<number>();
+  for (const nodeSetName of nodeSetNames) addNodeSetNodes(model, nodeSetName, nodeIds);
+  return nodeSelectionSummary(model, nodeIds);
 }
 
-function centroidForLoads(model: NormalizedOpenCAEModel, loadNames: string[]): [number, number, number] {
+function nodeSelectionForLoads(model: NormalizedOpenCAEModel, loadNames: string[]): NodeSelectionSummary {
   const active = new Set(loadNames);
   const nodeIds = new Set<number>();
   for (const load of model.loads) {
     if (!active.has(load.name)) continue;
     addLoadNodes(model, load, nodeIds);
   }
-  return centroidForNodes(model, nodeIds);
+  return nodeSelectionSummary(model, nodeIds);
 }
 
 function addLoadNodes(model: NormalizedOpenCAEModel, load: LoadJson, nodeIds: Set<number>): void {
@@ -431,33 +533,155 @@ function addLoadNodes(model: NormalizedOpenCAEModel, load: LoadJson, nodeIds: Se
   }
 }
 
-function centroidForNodeSetNames(model: NormalizedOpenCAEModel, nodeSetNames: Set<string>): [number, number, number] {
-  const nodeIds = new Set<number>();
-  for (const nodeSetName of nodeSetNames) addNodeSetNodes(model, nodeSetName, nodeIds);
-  return centroidForNodes(model, nodeIds);
-}
-
 function addNodeSetNodes(model: NormalizedOpenCAEModel, nodeSetName: string, nodeIds: Set<number>): void {
   const nodeSet = model.nodeSets.find((candidate) => candidate.name === nodeSetName);
   if (!nodeSet) return;
   for (const node of nodeSet.nodes) nodeIds.add(node);
 }
 
-function centroidForNodes(model: NormalizedOpenCAEModel, nodeIds: Set<number>): [number, number, number] {
-  if (nodeIds.size === 0) return [0, 0, 0];
+function nodeSelectionSummary(model: NormalizedOpenCAEModel, nodeIds: Set<number>): NodeSelectionSummary {
+  if (nodeIds.size === 0) {
+    return { count: 0, centroid: [0, 0, 0] };
+  }
   let x = 0;
   let y = 0;
   let z = 0;
   for (const node of nodeIds) {
-    x += model.nodes.coordinates[node * 3] ?? 0;
-    y += model.nodes.coordinates[node * 3 + 1] ?? 0;
-    z += model.nodes.coordinates[node * 3 + 2] ?? 0;
+    x += modelCoordinateAt(model, node, 0);
+    y += modelCoordinateAt(model, node, 1);
+    z += modelCoordinateAt(model, node, 2);
   }
-  return [x / nodeIds.size, y / nodeIds.size, z / nodeIds.size];
+  return { count: nodeIds.size, centroid: [x / nodeIds.size, y / nodeIds.size, z / nodeIds.size] };
 }
 
 function isFixedBoundaryCondition(boundaryCondition: BoundaryConditionJson): boolean {
   return boundaryCondition.type === "fixed";
+}
+
+function appliedLoadVectorForStep(model: NormalizedOpenCAEModel, loadNames: string[]): [number, number, number] {
+  return assembleNodalLoadVectorWithDiagnostics(model, loadNames).diagnostics.totalAppliedForce;
+}
+
+function stressBinsByBeamAxis(
+  model: NormalizedOpenCAEModel,
+  surfaceMesh: SolverSurfaceMesh,
+  values: number[],
+  binCount: number
+): StressBeamAxisBin[] {
+  const bounds = modelBounds(model);
+  const axis = dominantBoundsAxis(bounds);
+  const min = bounds.min[axis];
+  const max = bounds.max[axis];
+  const span = max - min;
+  const count = Math.max(1, Math.floor(binCount));
+  const bins = Array.from({ length: count }, (_value, bin) => ({
+    bin,
+    xCenter: span > 0 ? min + ((bin + 0.5) / count) * span : min,
+    sum: 0,
+    maxStress: Number.NEGATIVE_INFINITY,
+    nodeCount: 0
+  }));
+
+  for (let index = 0; index < surfaceMesh.nodes.length; index += 1) {
+    const node = surfaceMesh.nodes[index];
+    const value = values[index];
+    if (!node || !Number.isFinite(value)) continue;
+    const station = span > 0 ? (node[axis] - min) / span : 0;
+    const bin = Math.max(0, Math.min(count - 1, Math.floor(station * count)));
+    const target = bins[bin];
+    target.sum += value;
+    target.maxStress = Math.max(target.maxStress, value);
+    target.nodeCount += 1;
+  }
+
+  return bins.map((bin) => ({
+    bin: bin.bin,
+    xCenter: bin.xCenter,
+    meanStress: bin.nodeCount > 0 ? bin.sum / bin.nodeCount : 0,
+    maxStress: bin.nodeCount > 0 ? bin.maxStress : 0,
+    nodeCount: bin.nodeCount
+  }));
+}
+
+function stressVisualizationWarnings(
+  model: NormalizedOpenCAEModel,
+  bins: StressBeamAxisBin[],
+  fixedSelection: NodeSelectionSummary,
+  loadSelection: NodeSelectionSummary
+): string[] {
+  const warnings: string[] = [];
+  if (hasAbruptStressDiscontinuity(bins)) {
+    warnings.push("Stress field has an abrupt spatial discontinuity; verify surface node mapping and load/support selection.");
+  }
+  if (loadSupportMappingLooksSuspicious(model, fixedSelection, loadSelection)) {
+    warnings.push("Load/support mapping does not match expected end-face selection.");
+  }
+  return warnings;
+}
+
+function hasAbruptStressDiscontinuity(bins: StressBeamAxisBin[]): boolean {
+  const populated = bins.filter((bin) => bin.nodeCount > 0);
+  if (populated.length < 4) return false;
+  const means = populated.map((bin) => bin.meanStress);
+  const min = Math.min(...means);
+  const max = Math.max(...means);
+  const range = max - min;
+  if (!Number.isFinite(range) || range <= 1e-9) return false;
+  let largestJump = 0;
+  for (let index = 1; index < means.length; index += 1) {
+    largestJump = Math.max(largestJump, Math.abs(means[index] - means[index - 1]));
+  }
+  return largestJump / range > 0.9;
+}
+
+function loadSupportMappingLooksSuspicious(
+  model: NormalizedOpenCAEModel,
+  fixedSelection: NodeSelectionSummary,
+  loadSelection: NodeSelectionSummary
+): boolean {
+  if (fixedSelection.count === 0 || loadSelection.count === 0) return false;
+  const bounds = modelBounds(model);
+  const axis = dominantBoundsAxis(bounds);
+  const min = bounds.min[axis];
+  const max = bounds.max[axis];
+  const span = max - min;
+  if (!Number.isFinite(span) || span <= 1e-12) return false;
+  const fixedStation = fixedSelection.centroid[axis];
+  const loadStation = loadSelection.centroid[axis];
+  if (Math.abs(loadStation - fixedStation) < span * 0.4) return true;
+  const fixedEndDistance = Math.min(Math.abs(fixedStation - min), Math.abs(fixedStation - max));
+  const loadEndDistance = Math.min(Math.abs(loadStation - min), Math.abs(loadStation - max));
+  return fixedEndDistance > span * 0.25 || loadEndDistance > span * 0.25;
+}
+
+function modelBounds(model: NormalizedOpenCAEModel): { min: [number, number, number]; max: [number, number, number] } {
+  const min: [number, number, number] = [Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY];
+  const max: [number, number, number] = [Number.NEGATIVE_INFINITY, Number.NEGATIVE_INFINITY, Number.NEGATIVE_INFINITY];
+  for (let node = 0; node < model.counts.nodes; node += 1) {
+    for (const axis of [0, 1, 2] as const) {
+      const coordinate = modelCoordinateAt(model, node, axis);
+      min[axis] = Math.min(min[axis], coordinate);
+      max[axis] = Math.max(max[axis], coordinate);
+    }
+  }
+  return { min, max };
+}
+
+function dominantBoundsAxis(bounds: { min: [number, number, number]; max: [number, number, number] }): 0 | 1 | 2 {
+  const spans: [number, number, number] = [
+    bounds.max[0] - bounds.min[0],
+    bounds.max[1] - bounds.min[1],
+    bounds.max[2] - bounds.min[2]
+  ];
+  return spans[0] >= spans[1] && spans[0] >= spans[2] ? 0 : spans[1] >= spans[2] ? 1 : 2;
+}
+
+function modelCoordinateAt(model: NormalizedOpenCAEModel, node: number, axis: 0 | 1 | 2): number {
+  const value = model.nodes.coordinates[node * 3 + axis];
+  if (!Number.isFinite(value)) {
+    throw new Error(`Model node ${node} has non-finite coordinate ${axis}.`);
+  }
+  return value;
 }
 
 function distance(a: [number, number, number], b: [number, number, number]): number {
@@ -475,7 +699,12 @@ function maxAbs(values: Float64Array): number {
 }
 
 function vectorSumMagnitude(values: Float64Array | undefined): number {
-  if (!values) return 0;
+  const sum = vectorSum(values);
+  return Math.hypot(sum[0], sum[1], sum[2]);
+}
+
+function vectorSum(values: Float64Array | undefined): [number, number, number] {
+  if (!values) return [0, 0, 0];
   let x = 0;
   let y = 0;
   let z = 0;
@@ -484,7 +713,7 @@ function vectorSumMagnitude(values: Float64Array | undefined): number {
     y += values[index + 1];
     z += values[index + 2];
   }
-  return Math.hypot(x, y, z);
+  return [x, y, z];
 }
 
 function positiveMin(values: Float64Array): number | undefined {

@@ -1,3 +1,5 @@
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { resolve } from "node:path";
 import { describe, expect, test } from "vitest";
 import {
   solverSurfaceMeshFromModel,
@@ -169,7 +171,12 @@ describe("Core result structures", () => {
     const report = validateCoreResult(result);
 
     expect(report.ok).toBe(false);
-    expect(report.errors.map((error) => error.code)).toContain("surface-field-length-mismatch");
+    expect(report.errors).toContainEqual(
+      expect.objectContaining({
+        code: "surface-field-length-mismatch",
+        message: "Solver surface field length does not match surface mesh node count."
+      })
+    );
   });
 
   test("rejects surface mesh fields with non-node location or misaligned vectors and samples", () => {
@@ -237,6 +244,32 @@ describe("Core result structures", () => {
     );
   });
 
+  test("keeps surface mesh nodeMap and triangle references aligned", () => {
+    const surfaceMesh = solverSurfaceMeshFromModel(createSingleTetModel());
+
+    expect(surfaceMesh.nodeMap).toHaveLength(surfaceMesh.nodes.length);
+    for (const volumeNode of surfaceMesh.nodeMap) {
+      expect(Number.isInteger(volumeNode)).toBe(true);
+      expect(volumeNode).toBeGreaterThanOrEqual(0);
+      expect(volumeNode).toBeLessThan(createSingleTetModel().nodes.coordinates.length / 3);
+    }
+    for (const triangle of surfaceMesh.triangles) {
+      for (const surfaceNode of triangle) {
+        expect(Number.isInteger(surfaceNode)).toBe(true);
+        expect(surfaceNode).toBeGreaterThanOrEqual(0);
+        expect(surfaceNode).toBeLessThan(surfaceMesh.nodes.length);
+      }
+    }
+  });
+
+  test("does not contain modulo fallback surface-node indexing in packages or services", () => {
+    const offenders = sourceFiles(resolve(process.cwd(), "../.."))
+      .filter((file) => /(?:packages|services)\//.test(file))
+      .filter((file) => /nodes\s*\[\s*index\s*%\s*nodes\.length\s*\]/.test(readFileSync(file, "utf8")));
+
+    expect(offenders).toEqual([]);
+  });
+
   test("rejects Core results missing app-facing summary units and summary provenance", () => {
     const result: CoreSolveResult = {
       summary: {
@@ -273,3 +306,20 @@ describe("Core result structures", () => {
     );
   });
 });
+
+function sourceFiles(root: string): string[] {
+  if (!existsSync(root)) return [];
+  const entries = readdirSync(root);
+  const files: string[] = [];
+  for (const entry of entries) {
+    if (entry === "node_modules" || entry === "dist" || entry === ".git") continue;
+    const path = resolve(root, entry);
+    const stat = statSync(path);
+    if (stat.isDirectory()) {
+      files.push(...sourceFiles(path));
+    } else if (/\.(ts|tsx|js|jsx)$/.test(entry)) {
+      files.push(path);
+    }
+  }
+  return files;
+}

@@ -4,6 +4,7 @@ import {
   connectedComponents,
   extractBoundarySurfaceFacets,
   nodeSetFromSurfaceSet,
+  normalizeModelJson,
   solverSurfaceMeshFromModel,
   surfaceArea,
   type OpenCAEModelJson,
@@ -13,6 +14,7 @@ import {
 } from "@opencae/core";
 import {
   solveDynamicLinearTetMDOF,
+  recoverNodalVonMisesFromElements,
   solveStaticLinearTet,
   solveStaticLinearTet4Cpu
 } from "../src";
@@ -157,6 +159,34 @@ describe("Core validation suite static benchmarks", () => {
     expect(displacementField?.units).toBe("mm");
     expect(displacementField?.values).toHaveLength(surfaceMesh?.nodes.length ?? -1);
     expect(displacementField?.vectors).toHaveLength(surfaceMesh?.nodes.length ?? -1);
+    const normalized = normalizeModelJson(model);
+    expect(normalized.ok).toBe(true);
+    if (!normalized.ok || !surfaceMesh || !stressField || !displacementField) return;
+    const recoveredNodalVonMises = recoverNodalVonMisesFromElements(normalized.model, result.result.vonMises);
+    const expectedSurfaceStress = surfaceMesh.nodeMap.map((volumeNode) => recoveredNodalVonMises[volumeNode] / 1_000_000);
+    const expectedSurfaceDisplacement = surfaceMesh.nodeMap.map((volumeNode) => {
+      const offset = volumeNode * 3;
+      return Math.hypot(
+        result.result.displacement[offset],
+        result.result.displacement[offset + 1],
+        result.result.displacement[offset + 2]
+      ) * 1000;
+    });
+    const expectedSurfaceDisplacementVectors = surfaceMesh.nodeMap.map((volumeNode) => {
+      const offset = volumeNode * 3;
+      return [
+        result.result.displacement[offset] * 1000,
+        result.result.displacement[offset + 1] * 1000,
+        result.result.displacement[offset + 2] * 1000
+      ];
+    });
+    for (let index = 0; index < surfaceMesh.nodes.length; index += 1) {
+      expect(stressField.values[index]).toBeCloseTo(expectedSurfaceStress[index] ?? 0, 12);
+      expect(displacementField.values[index]).toBeCloseTo(expectedSurfaceDisplacement[index] ?? 0, 12);
+      expect(displacementField.vectors?.[index]?.[0]).toBeCloseTo(expectedSurfaceDisplacementVectors[index]?.[0] ?? 0, 12);
+      expect(displacementField.vectors?.[index]?.[1]).toBeCloseTo(expectedSurfaceDisplacementVectors[index]?.[1] ?? 0, 12);
+      expect(displacementField.vectors?.[index]?.[2]).toBeCloseTo(expectedSurfaceDisplacementVectors[index]?.[2] ?? 0, 12);
+    }
     expect(engineeringStressField?.location).toBe("element");
     expect(engineeringStressField?.surfaceMeshRef).toBeUndefined();
     expect(coreResult?.summary.maxStress).toBe(engineeringStressField?.max);
@@ -202,10 +232,24 @@ describe("Core validation suite static benchmarks", () => {
     expect(diagnostic?.surfaceTriangleCount).toBe(coreResult?.surfaceMesh?.triangles.length);
     expect(diagnostic?.stressFieldValueCount).toBe(stressField?.values.length);
     expect(diagnostic?.displacementFieldValueCount).toBe(displacementField?.values.length);
+    expect(diagnostic?.stressFieldLocation).toBe("node");
+    expect(diagnostic?.surfaceMeshRef).toBe(coreResult?.surfaceMesh?.id);
+    expect(diagnostic?.visualizationSource).toBe("volume_weighted_nodal_recovery");
     expect(diagnostic?.fieldSurfaceAlignment).toBe("ok");
+    expect(diagnostic?.fixedNodeCount).toBeGreaterThan(0);
+    expect(diagnostic?.loadNodeCount).toBeGreaterThan(0);
+    expect(diagnostic?.appliedLoadVector[0]).toBeCloseTo(0, 12);
+    expect(diagnostic?.appliedLoadVector[1]).toBeCloseTo(0, 12);
+    expect(diagnostic?.appliedLoadVector[2]).toBeCloseTo(-500, 6);
+    expect(diagnostic?.reactionVector[2]).toBeCloseTo(500, 6);
     expect(diagnostic?.fixedCentroid[0]).toBeCloseTo(0, 12);
     expect(diagnostic?.loadCentroid[0]).toBeCloseTo(0.18, 12);
     expect(diagnostic?.effectiveLeverArmMm).toBeCloseTo(180, 8);
+    expect(diagnostic?.stressByBeamAxisBin).toHaveLength(20);
+    const populatedBins = diagnostic?.stressByBeamAxisBin.filter((bin) => bin.nodeCount > 0) ?? [];
+    expect(populatedBins.length).toBeGreaterThan(4);
+    expect(populatedBins[0]?.maxStress).toBeGreaterThan((populatedBins.at(-1)?.maxStress ?? 0) * 1.4);
+    expect(diagnostic?.warnings).not.toContain("Stress field has an abrupt spatial discontinuity; verify surface node mapping and load/support selection.");
   });
 
   test("pressure patch total force equals pressure times area and balances reactions", () => {
@@ -683,15 +727,24 @@ function isStressVisualizationDiagnostic(value: unknown): value is {
   engineeringStressMaxMpa: number;
   plotStressMinMpa: number;
   plotStressMaxMpa: number;
+  stressFieldLocation: string;
+  surfaceMeshRef: string;
+  visualizationSource: string;
   stressRecoveryMethod: string;
   surfaceNodeCount: number;
   surfaceTriangleCount: number;
   stressFieldValueCount: number;
   displacementFieldValueCount: number;
   fieldSurfaceAlignment: string;
+  fixedNodeCount: number;
+  loadNodeCount: number;
+  appliedLoadVector: [number, number, number];
+  reactionVector: [number, number, number];
   fixedCentroid: [number, number, number];
   loadCentroid: [number, number, number];
   effectiveLeverArmMm: number;
+  stressByBeamAxisBin: Array<{ bin: number; xCenter: number; meanStress: number; maxStress: number; nodeCount: number }>;
+  warnings: string[];
 } {
   return (
     typeof value === "object" &&
