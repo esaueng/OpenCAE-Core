@@ -1,6 +1,6 @@
 {
   "name": "@opencae/web",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Web application shell for OpenCAE Core.",
   "private": true,
   "type": "module",
