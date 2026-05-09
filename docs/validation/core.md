@@ -90,11 +90,11 @@ Complex geometry must provide an actual connected volume mesh for Core solving. 
 
 ## Result Surface Fields
 
-Core results include a solver surface mesh derived from the solved volume mesh. `surfaceMesh.nodeMap` is ordered one-to-one with `surfaceMesh.nodes` and maps each surface node back to its volume node id. Any node field with `surfaceMeshRef` must have exactly one value per solver surface node.
+Core results include a solver surface mesh derived from the solved volume mesh. `surfaceMesh.nodeMap` is ordered one-to-one with `surfaceMesh.nodes` and maps each surface node back to its volume node id. Any field with `surfaceMeshRef` must be a node field with exactly one value per solver surface node. Displacement vectors and samples, when present, must use the same surface-node order.
 
-Static and dynamic Core results expose surface displacement magnitudes and recovered nodal von Mises stress fields for visualization. The recovered stress field is tagged as `nodal_recovered_surface_average`; it is not used as the engineering max. `summary.maxStress` and safety factor calculations stay tied to raw element von Mises values.
+Static and dynamic Core results expose surface displacement and recovered nodal von Mises stress fields for visualization. The `displacement-surface` field uses millimeters and includes surface-node-aligned vectors. The `stress-surface` field uses MPa and is tagged with `visualizationSource: "volume_weighted_nodal_recovery"` and `engineeringSource: "raw_element_von_mises"`. It is not used as the engineering max. `summary.maxStress` and safety factor calculations stay tied to raw element von Mises values.
 
-The plot stress field is built by volume-weighted nodal recovery from connected element von Mises stress, followed by one visualization-only Laplacian smoothing pass. The `stress-visualization` diagnostic records engineering max stress, plot min/max stress, `volume_weighted_nodal_average`, smoothing iteration count, surface node/triangle counts, field value count, fixed/load centroids, and effective lever arm in millimeters.
+The plot stress field is built by volume-weighted nodal recovery from connected element von Mises stress, then sampled through `surfaceMesh.nodeMap`. The cloud service must not fabricate surface samples from element stress by index. The `stress-visualization` diagnostic records engineering max stress in MPa, plot min/max stress in MPa, `volume_weighted_nodal_recovery`, surface node/triangle counts, stress/displacement field value counts, field alignment status, fixed/load centroids, and effective lever arm in millimeters.
 
 ## Bracket Regression Fixture
 

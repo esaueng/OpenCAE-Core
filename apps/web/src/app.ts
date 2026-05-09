@@ -96,7 +96,7 @@ export function renderCpuSolveSummary(result: StaticLinearTet4CpuSolveResult): s
   const coreResult = result.ok ? result.result.coreResult : undefined;
   const engineeringStress = coreResult?.summary.maxStress ?? diagnostics?.maxVonMisesStress;
   const engineeringStressUnits = coreResult?.summary.maxStressUnits;
-  const plotStressField = coreResult?.fields.find((field) => field.id === "stress-von-mises-surface");
+  const plotStressField = coreResult?.fields.find((field) => field.id === "stress-surface");
   const showPlotStress =
     engineeringStress !== undefined &&
     plotStressField !== undefined &&

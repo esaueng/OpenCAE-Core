@@ -96,7 +96,8 @@ describe("Core result structures", () => {
         nodes: [[0, 0, 0]],
         triangles: [[0, 1, 2]],
         coordinateSpace: "solver",
-        source: "opencae_core_volume_mesh"
+        source: "opencae_core_volume_mesh",
+        nodeMap: [0]
       },
       diagnostics: [],
       provenance: {
@@ -169,6 +170,71 @@ describe("Core result structures", () => {
 
     expect(report.ok).toBe(false);
     expect(report.errors.map((error) => error.code)).toContain("surface-field-length-mismatch");
+  });
+
+  test("rejects surface mesh fields with non-node location or misaligned vectors and samples", () => {
+    const surfaceMesh = solverSurfaceMeshFromModel(createSingleTetModel());
+    const result: CoreSolveResult = {
+      summary: {
+        maxStress: 10,
+        maxStressUnits: "Pa",
+        maxDisplacement: 0.1,
+        maxDisplacementUnits: "m",
+        reactionForce: 5,
+        reactionForceUnits: "N",
+        provenance: {
+          kind: "opencae_core_fea",
+          solver: "opencae-core-sparse-tet",
+          resultSource: "computed",
+          meshSource: "actual_volume_mesh",
+          units: "m-N-s-Pa"
+        }
+      },
+      fields: [
+        {
+          id: "element-stress-on-surface",
+          type: "stress",
+          location: "element",
+          values: [1, 2, 3, 4],
+          min: 1,
+          max: 4,
+          units: "MPa",
+          surfaceMeshRef: surfaceMesh.id
+        },
+        {
+          id: "surface-displacement",
+          type: "displacement",
+          location: "node",
+          values: [0, 0.1, 0.2, 0.3],
+          vectors: [[0, 0, 0]],
+          samples: [{ node: 0 }],
+          min: 0,
+          max: 0.3,
+          units: "mm",
+          surfaceMeshRef: surfaceMesh.id
+        }
+      ],
+      surfaceMesh,
+      diagnostics: [],
+      provenance: {
+        kind: "opencae_core_fea",
+        solver: "opencae-core-sparse-tet",
+        resultSource: "computed",
+        meshSource: "actual_volume_mesh",
+        units: "m-N-s-Pa"
+      }
+    };
+
+    const report = validateCoreResult(result);
+
+    expect(report.ok).toBe(false);
+    expect(report.errors.map((error) => error.code)).toEqual(
+      expect.arrayContaining([
+        "surface-field-location-mismatch",
+        "surface-field-vector-length-mismatch",
+        "surface-field-sample-length-mismatch"
+      ])
+    );
   });
 
   test("rejects Core results missing app-facing summary units and summary provenance", () => {

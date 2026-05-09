@@ -12,7 +12,7 @@ export type SolverSurfaceMesh = {
   triangles: [number, number, number][];
   coordinateSpace: "solver" | "display_model";
   source: "opencae_core_volume_mesh";
-  nodeMap?: number[];
+  nodeMap: number[];
 };
 
 export type CoreResultField = {
@@ -24,6 +24,7 @@ export type CoreResultField = {
   max: number;
   units: string;
   samples?: unknown[];
+  vectors?: [number, number, number][];
   meshRef?: string;
   surfaceMeshRef?: string;
   frameIndex?: number;
@@ -246,6 +247,15 @@ function validateField(
       errors.push(issue("non-finite-field-value", "Core result field values must be finite.", `${path}.values[${valueIndex}]`));
     }
   });
+  if (field.vectors !== undefined) {
+    field.vectors.forEach((vector, vectorIndex) => {
+      for (let component = 0; component < 3; component += 1) {
+        if (!Number.isFinite(vector[component])) {
+          errors.push(issue("non-finite-field-vector", "Core result field vectors must be finite.", `${path}.vectors[${vectorIndex}]`));
+        }
+      }
+    });
+  }
   if (!Number.isFinite(field.min) || !Number.isFinite(field.max) || field.min > field.max) {
     errors.push(issue("invalid-field-range", "Core result field min/max must be finite and ordered.", path));
   }
@@ -265,8 +275,19 @@ function validateField(
   if (field.surfaceMeshRef !== undefined) {
     if (!surfaceMesh || field.surfaceMeshRef !== surfaceMesh.id) {
       errors.push(issue("missing-surface-mesh-reference", "Core result field surfaceMeshRef must reference the result surface mesh.", `${path}.surfaceMeshRef`));
-    } else if (field.location === "node" && field.values.length !== surfaceMesh.nodes.length) {
-      errors.push(issue("surface-field-length-mismatch", "Surface mesh node fields must contain exactly one value per surface node.", `${path}.values`));
+    } else {
+      if (field.location !== "node") {
+        errors.push(issue("surface-field-location-mismatch", "Surface mesh fields must be node fields.", `${path}.location`));
+      }
+      if (field.values.length !== surfaceMesh.nodes.length) {
+        errors.push(issue("surface-field-length-mismatch", "Surface mesh node fields must contain exactly one value per surface node.", `${path}.values`));
+      }
+      if (field.samples !== undefined && field.samples.length !== surfaceMesh.nodes.length) {
+        errors.push(issue("surface-field-sample-length-mismatch", "Surface mesh field samples must align one-to-one with surface nodes.", `${path}.samples`));
+      }
+      if (field.vectors !== undefined && field.vectors.length !== surfaceMesh.nodes.length) {
+        errors.push(issue("surface-field-vector-length-mismatch", "Surface mesh field vectors must align one-to-one with surface nodes.", `${path}.vectors`));
+      }
     }
   }
 }
@@ -292,16 +313,18 @@ function validateSurfaceMesh(surfaceMesh: SolverSurfaceMesh, errors: CoreResultV
       }
     }
   });
-  if (surfaceMesh.nodeMap !== undefined) {
-    if (surfaceMesh.nodeMap.length !== surfaceMesh.nodes.length) {
-      errors.push(issue("invalid-surface-node-map", "Surface mesh nodeMap must align one-to-one with surface nodes.", "surfaceMesh.nodeMap"));
-    }
-    surfaceMesh.nodeMap.forEach((volumeNode, index) => {
-      if (!Number.isInteger(volumeNode) || volumeNode < 0) {
-        errors.push(issue("invalid-surface-node-map", "Surface mesh nodeMap entries must be non-negative node ids.", `surfaceMesh.nodeMap[${index}]`));
-      }
-    });
+  if (!Array.isArray(surfaceMesh.nodeMap)) {
+    errors.push(issue("invalid-surface-node-map", "Surface mesh nodeMap must be present.", "surfaceMesh.nodeMap"));
+    return;
   }
+  if (surfaceMesh.nodeMap.length !== surfaceMesh.nodes.length) {
+    errors.push(issue("invalid-surface-node-map", "Surface mesh nodeMap must align one-to-one with surface nodes.", "surfaceMesh.nodeMap"));
+  }
+  surfaceMesh.nodeMap.forEach((volumeNode, index) => {
+    if (!Number.isInteger(volumeNode) || volumeNode < 0) {
+      errors.push(issue("invalid-surface-node-map", "Surface mesh nodeMap entries must be non-negative node ids.", `surfaceMesh.nodeMap[${index}]`));
+    }
+  });
 }
 
 function requiresFrameMetadata(field: CoreResultField): boolean {

@@ -109,41 +109,6 @@ export function collectTetCoordinates(
   return tetCoordinates;
 }
 
-export function recoverNodalVonMisesFromElements(
-  model: NormalizedOpenCAEModel,
-  elementVonMises: ArrayLike<number>,
-  options: { surfaceOnly?: boolean } = {}
-): Float64Array {
-  const nodalValues = new Float64Array(model.counts.nodes);
-  const weights = new Float64Array(model.counts.nodes);
-  const surfaceNodes = options.surfaceOnly ? collectSurfaceNodes(model) : undefined;
-  let elementIndex = 0;
-
-  for (const block of model.elementBlocks) {
-    if (block.type !== "Tet4") {
-      elementIndex += Math.floor(block.connectivity.length / (block.type === "Tet10" ? 10 : 4));
-      continue;
-    }
-    for (let elementOffset = 0; elementOffset < block.connectivity.length; elementOffset += 4) {
-      const geometry = computeTet4Geometry(collectTetCoordinates(model.nodes.coordinates, block.connectivity, elementOffset));
-      const weight = geometry.ok ? geometry.volume : 1;
-      const value = elementVonMises[elementIndex] ?? 0;
-      for (let localNode = 0; localNode < 4; localNode += 1) {
-        const node = block.connectivity[elementOffset + localNode];
-        if (surfaceNodes && !surfaceNodes.has(node)) continue;
-        nodalValues[node] += value * weight;
-        weights[node] += weight;
-      }
-      elementIndex += 1;
-    }
-  }
-
-  for (let node = 0; node < nodalValues.length; node += 1) {
-    if (weights[node] > 0) nodalValues[node] /= weights[node];
-  }
-  return nodalValues;
-}
-
 export function smoothNodalScalarField(
   model: NormalizedOpenCAEModel,
   nodalValues: ArrayLike<number>,
@@ -168,14 +133,6 @@ export function smoothNodalScalarField(
   }
 
   return current;
-}
-
-function collectSurfaceNodes(model: NormalizedOpenCAEModel): Set<number> {
-  const nodes = new Set<number>();
-  for (const facet of model.surfaceFacets) {
-    for (const node of facet.nodes) nodes.add(node);
-  }
-  return nodes;
 }
 
 function nodeAdjacency(model: NormalizedOpenCAEModel): Set<number>[] {

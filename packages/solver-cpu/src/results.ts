@@ -9,10 +9,8 @@ import {
   type NormalizedOpenCAEModel,
   type SolverSurfaceMesh
 } from "@opencae/core";
-import { recoverNodalVonMisesFromElements, smoothNodalScalarField } from "./element";
+import { recoverNodalVonMisesFromElements } from "./recovery";
 import type { DynamicTet4CpuResult, DynamicTet4CpuDiagnostics, StaticLinearTet4CpuResult, CpuSolverDiagnostics } from "./types";
-
-const VISUALIZATION_SMOOTHING_ITERATIONS = 1;
 
 export function staticCoreResultFromSolve(
   model: NormalizedOpenCAEModel,
@@ -24,32 +22,36 @@ export function staticCoreResultFromSolve(
   const provenance = coreProvenance(model, "opencae-core-sparse-tet");
   const maxDisplacement = maxNodeVectorNorm(result.displacement);
   const reactionForce = vectorSumMagnitude(result.reactionForce);
-  const surfaceDisplacement = surfaceVectorMagnitudes(surfaceMesh, result.displacement);
+  const displacementScale = lengthToMmScale(model);
+  const stressScale = stressToMpaScale(model);
+  const surfaceDisplacement = surfaceVectorMagnitudes(surfaceMesh, result.displacement, displacementScale);
+  const surfaceDisplacementVectors = surfaceNodeVectors(surfaceMesh, result.displacement, displacementScale);
   const recoveredNodalVonMises = recoverNodalVonMisesFromElements(model, result.vonMises);
-  const plotNodalVonMises = smoothNodalScalarField(model, recoveredNodalVonMises, VISUALIZATION_SMOOTHING_ITERATIONS);
   const surfaceVonMises = surfaceNodeScalars(
     surfaceMesh,
-    plotNodalVonMises
+    recoveredNodalVonMises,
+    stressScale
   );
   const fields: CoreResultField[] = [
     createCoreResultField({
-      id: "displacement-magnitude-surface",
+      id: "displacement-surface",
       type: "displacement",
       location: "node",
       values: surfaceDisplacement,
-      units: displacementUnits(model),
+      vectors: surfaceDisplacementVectors,
+      units: "mm",
       surfaceMeshRef: surfaceMesh.id,
-      visualizationSource: "surface_displacement_magnitude"
+      visualizationSource: "surface_displacement_vector"
     }),
     createCoreResultField({
-      id: "stress-von-mises-surface",
+      id: "stress-surface",
       type: "stress",
       location: "node",
       values: surfaceVonMises,
-      units: stressUnits(model),
+      units: "MPa",
       surfaceMeshRef: surfaceMesh.id,
-      visualizationSource: "nodal_recovered_surface_average",
-      engineeringSource: "element_von_mises"
+      visualizationSource: "volume_weighted_nodal_recovery",
+      engineeringSource: "raw_element_von_mises"
     }),
     createCoreResultField({
       id: "stress-von-mises-element",
@@ -58,7 +60,7 @@ export function staticCoreResultFromSolve(
       values: result.vonMises,
       units: stressUnits(model),
       meshRef: "solver-volume",
-      engineeringSource: "element_von_mises"
+      engineeringSource: "raw_element_von_mises"
     })
   ];
   if (hasYieldStrength(model)) {
@@ -70,13 +72,19 @@ export function staticCoreResultFromSolve(
         values: safetyFactor,
         units: "ratio",
         meshRef: "solver-volume",
-        engineeringSource: "element_von_mises"
+        engineeringSource: "raw_element_von_mises"
       })
     );
   }
 
   const minSafetyFactor = positiveMin(safetyFactor);
-  const stressDiagnostic = stressVisualizationDiagnostic(model, surfaceMesh, surfaceVonMises, maxAbs(result.vonMises));
+  const stressDiagnostic = stressVisualizationDiagnostic(
+    model,
+    surfaceMesh,
+    surfaceVonMises,
+    surfaceDisplacement,
+    maxAbs(result.vonMises) * stressScale
+  );
   const resultDiagnostics: unknown[] = [{ ...diagnostics }, stressDiagnostic];
   if (maxDisplacement === 0 && reactionForce > 1e-12) {
     resultDiagnostics.push({
@@ -113,35 +121,41 @@ export function dynamicCoreResultFromSolve(
   const provenance = coreProvenance(model, "opencae-core-mdof-tet");
   const fields: CoreResultField[] = [];
   let latestSurfaceVonMises: number[] = [];
+  let latestSurfaceDisplacement: number[] = [];
+  const displacementScale = lengthToMmScale(model);
+  const stressScale = stressToMpaScale(model);
   for (const frame of result.frames) {
-    const surfaceDisplacement = surfaceVectorMagnitudes(surfaceMesh, frame.displacement.values);
-    const surfaceVelocity = surfaceVectorMagnitudes(surfaceMesh, frame.velocity.values);
-    const surfaceAcceleration = surfaceVectorMagnitudes(surfaceMesh, frame.acceleration.values);
+    const surfaceDisplacement = surfaceVectorMagnitudes(surfaceMesh, frame.displacement.values, displacementScale);
+    const surfaceDisplacementVectors = surfaceNodeVectors(surfaceMesh, frame.displacement.values, displacementScale);
+    const surfaceVelocity = surfaceVectorMagnitudes(surfaceMesh, frame.velocity.values, displacementScale);
+    const surfaceAcceleration = surfaceVectorMagnitudes(surfaceMesh, frame.acceleration.values, displacementScale);
     const recoveredNodalVonMises = recoverNodalVonMisesFromElements(model, frame.vonMises.values);
-    const plotNodalVonMises = smoothNodalScalarField(model, recoveredNodalVonMises, VISUALIZATION_SMOOTHING_ITERATIONS);
     const surfaceVonMises = surfaceNodeScalars(
       surfaceMesh,
-      plotNodalVonMises
+      recoveredNodalVonMises,
+      stressScale
     );
     latestSurfaceVonMises = surfaceVonMises;
+    latestSurfaceDisplacement = surfaceDisplacement;
     fields.push(
       createCoreResultField({
-        id: `frame-${frame.frameIndex}-displacement`,
+        id: `frame-${frame.frameIndex}-displacement-surface`,
         type: "displacement",
         location: "node",
         values: surfaceDisplacement,
-        units: displacementUnits(model),
+        vectors: surfaceDisplacementVectors,
+        units: "mm",
         surfaceMeshRef: surfaceMesh.id,
         frameIndex: frame.frameIndex,
         timeSeconds: frame.timeSeconds,
-        visualizationSource: "surface_displacement_magnitude"
+        visualizationSource: "surface_displacement_vector"
       }),
       createCoreResultField({
         id: `frame-${frame.frameIndex}-velocity`,
         type: "velocity",
         location: "node",
         values: surfaceVelocity,
-        units: `${displacementUnits(model)}/s`,
+        units: "mm/s",
         surfaceMeshRef: surfaceMesh.id,
         frameIndex: frame.frameIndex,
         timeSeconds: frame.timeSeconds,
@@ -152,23 +166,23 @@ export function dynamicCoreResultFromSolve(
         type: "acceleration",
         location: "node",
         values: surfaceAcceleration,
-        units: `${displacementUnits(model)}/s^2`,
+        units: "mm/s^2",
         surfaceMeshRef: surfaceMesh.id,
         frameIndex: frame.frameIndex,
         timeSeconds: frame.timeSeconds,
         visualizationSource: "surface_acceleration_magnitude"
       }),
       createCoreResultField({
-        id: `frame-${frame.frameIndex}-stress-von-mises-surface`,
+        id: `frame-${frame.frameIndex}-stress-surface`,
         type: "stress",
         location: "node",
         values: surfaceVonMises,
-        units: stressUnits(model),
+        units: "MPa",
         surfaceMeshRef: surfaceMesh.id,
         frameIndex: frame.frameIndex,
         timeSeconds: frame.timeSeconds,
-        visualizationSource: "nodal_recovered_surface_average",
-        engineeringSource: "element_von_mises"
+        visualizationSource: "volume_weighted_nodal_recovery",
+        engineeringSource: "raw_element_von_mises"
       }),
       createCoreResultField({
         id: `frame-${frame.frameIndex}-stress-von-mises-element`,
@@ -179,7 +193,7 @@ export function dynamicCoreResultFromSolve(
         meshRef: "solver-volume",
         frameIndex: frame.frameIndex,
         timeSeconds: frame.timeSeconds,
-        engineeringSource: "element_von_mises"
+        engineeringSource: "raw_element_von_mises"
       })
     );
     if (hasYieldStrength(model)) {
@@ -193,7 +207,7 @@ export function dynamicCoreResultFromSolve(
           meshRef: "solver-volume",
           frameIndex: frame.frameIndex,
           timeSeconds: frame.timeSeconds,
-          engineeringSource: "element_von_mises"
+          engineeringSource: "raw_element_von_mises"
         })
       );
     }
@@ -231,7 +245,8 @@ export function dynamicCoreResultFromSolve(
         model,
         surfaceMesh,
         latestSurfaceVonMises,
-        diagnostics.maxVonMisesStress
+        latestSurfaceDisplacement,
+        diagnostics.maxVonMisesStress * stressScale
       )
     ],
     provenance
@@ -303,32 +318,53 @@ function maxNodeVectorNorm(values: Float64Array): number {
   return max;
 }
 
-function surfaceVectorMagnitudes(surfaceMesh: SolverSurfaceMesh, vector: Float64Array): number[] {
-  return (surfaceMesh.nodeMap ?? []).map((volumeNode) => {
+function stressToMpaScale(model: NormalizedOpenCAEModel): number {
+  return model.coordinateSystem.solverUnits === "mm-N-s-MPa" ? 1 : 1 / 1_000_000;
+}
+
+function surfaceVectorMagnitudes(surfaceMesh: SolverSurfaceMesh, vector: Float64Array, scale: number): number[] {
+  return surfaceMesh.nodeMap.map((volumeNode) => {
     const offset = volumeNode * 3;
-    return Math.hypot(vector[offset] ?? 0, vector[offset + 1] ?? 0, vector[offset + 2] ?? 0);
+    return Math.hypot(vector[offset] ?? 0, vector[offset + 1] ?? 0, vector[offset + 2] ?? 0) * scale;
   });
 }
 
-function surfaceNodeScalars(surfaceMesh: SolverSurfaceMesh, nodalValues: Float64Array): number[] {
-  return (surfaceMesh.nodeMap ?? []).map((volumeNode) => nodalValues[volumeNode] ?? 0);
+function surfaceNodeVectors(
+  surfaceMesh: SolverSurfaceMesh,
+  vector: Float64Array,
+  scale: number
+): [number, number, number][] {
+  return surfaceMesh.nodeMap.map((volumeNode) => {
+    const offset = volumeNode * 3;
+    return [
+      (vector[offset] ?? 0) * scale,
+      (vector[offset + 1] ?? 0) * scale,
+      (vector[offset + 2] ?? 0) * scale
+    ];
+  });
+}
+
+function surfaceNodeScalars(surfaceMesh: SolverSurfaceMesh, nodalValues: Float64Array, scale: number): number[] {
+  return surfaceMesh.nodeMap.map((volumeNode) => (nodalValues[volumeNode] ?? 0) * scale);
 }
 
 function stressVisualizationDiagnostic(
   model: NormalizedOpenCAEModel,
   surfaceMesh: SolverSurfaceMesh,
   plotValues: number[],
-  engineeringStressMax: number
+  displacementValues: number[],
+  engineeringStressMaxMpa: number
 ): {
   id: "stress-visualization";
-  engineeringStressMax: number;
-  plotStressMin: number;
-  plotStressMax: number;
-  stressRecoveryMethod: "volume_weighted_nodal_average";
-  smoothingIterations: number;
+  engineeringStressMaxMpa: number;
+  plotStressMinMpa: number;
+  plotStressMaxMpa: number;
+  stressRecoveryMethod: "volume_weighted_nodal_recovery";
   surfaceNodeCount: number;
   surfaceTriangleCount: number;
-  fieldValueCount: number;
+  stressFieldValueCount: number;
+  displacementFieldValueCount: number;
+  fieldSurfaceAlignment: "ok";
   fixedCentroid: [number, number, number];
   loadCentroid: [number, number, number];
   effectiveLeverArmMm: number;
@@ -338,14 +374,15 @@ function stressVisualizationDiagnostic(
   const loadCentroid = centroidForLoads(model, activeStep?.loads ?? []);
   return {
     id: "stress-visualization",
-    engineeringStressMax,
-    plotStressMin: plotValues.length > 0 ? Math.min(...plotValues) : 0,
-    plotStressMax: plotValues.length > 0 ? Math.max(...plotValues) : 0,
-    stressRecoveryMethod: "volume_weighted_nodal_average",
-    smoothingIterations: VISUALIZATION_SMOOTHING_ITERATIONS,
+    engineeringStressMaxMpa,
+    plotStressMinMpa: plotValues.length > 0 ? Math.min(...plotValues) : 0,
+    plotStressMaxMpa: plotValues.length > 0 ? Math.max(...plotValues) : 0,
+    stressRecoveryMethod: "volume_weighted_nodal_recovery",
     surfaceNodeCount: surfaceMesh.nodes.length,
     surfaceTriangleCount: surfaceMesh.triangles.length,
-    fieldValueCount: plotValues.length,
+    stressFieldValueCount: plotValues.length,
+    displacementFieldValueCount: displacementValues.length,
+    fieldSurfaceAlignment: "ok",
     fixedCentroid,
     loadCentroid,
     effectiveLeverArmMm: distance(fixedCentroid, loadCentroid) * lengthToMmScale(model)

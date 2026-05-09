@@ -1,5 +1,5 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { OPENCAE_CORE_VERSION, validateModelJson, type OpenCAEModelJson } from "@opencae/core";
+import { OPENCAE_CORE_VERSION, validateCoreResult, validateModelJson, type OpenCAEModelJson } from "@opencae/core";
 import { solveCoreDynamic, solveCoreStatic, type CpuSolverOptions, type DynamicTet4CpuOptions } from "@opencae/solver-cpu";
 
 export const RUNNER_VERSION = "0.1.0";
@@ -76,6 +76,22 @@ export function solveResponse(request: unknown): CloudResponse {
         runId: request.runId,
         error: result.error,
         diagnostics: result.diagnostics
+      }
+    };
+  }
+
+  const resultValidation = validateCoreResult(result.result);
+  if (!resultValidation.ok) {
+    return {
+      status: 500,
+      body: {
+        ok: false,
+        runId: request.runId,
+        error: {
+          code: "result-validation-failed",
+          message: "OpenCAE Core result failed surface field alignment validation.",
+          report: resultValidation
+        }
       }
     };
   }

@@ -69,6 +69,38 @@ describe("OpenCAE Core Cloud runner", () => {
     });
   });
 
+  test("does not synthesize or independently compact surface stress fields", () => {
+    const response = solveResponse({
+      runId: "static-compact",
+      analysisType: "static_stress",
+      coreModel: singleTetStaticFixture,
+      resultSettings: { compact: true, maxFieldValues: 1 }
+    });
+
+    expect(response.status).toBe(200);
+    const body = response.body as {
+      fields: Array<{
+        id: string;
+        type: string;
+        location: string;
+        values: number[];
+        samples?: unknown[];
+        surfaceMeshRef?: string;
+      }>;
+      surfaceMesh: { id: string; nodes: unknown[] };
+    };
+    const surfaceStress = body.fields.find((field) => field.id === "stress-surface");
+    const elementStress = body.fields.find((field) => field.id === "stress-von-mises-element");
+
+    expect(surfaceStress?.location).toBe("node");
+    expect(surfaceStress?.surfaceMeshRef).toBe(body.surfaceMesh.id);
+    expect(surfaceStress?.values).toHaveLength(body.surfaceMesh.nodes.length);
+    expect(surfaceStress?.samples).toBeUndefined();
+    expect(elementStress?.location).toBe("element");
+    expect(elementStress?.surfaceMeshRef).toBeUndefined();
+    expect(elementStress?.samples).toBeUndefined();
+  });
+
   test("solves dynamic Core models with MDOF production provenance", () => {
     const response = solveResponse({
       runId: "dynamic-1",

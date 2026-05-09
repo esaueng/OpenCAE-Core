@@ -28,9 +28,9 @@ Surface force loads are distributed over selected facets by area, then to each f
 
 Accurate result visualization should use the solver surface mesh returned by Core metadata. `surfaceMesh.nodeMap` maps each surface node back to the volume mesh node id. Surface visualization fields use `surfaceMeshRef` and must contain one value per surface node, so downstream viewers can render and deform the solved topology instead of projecting values onto unrelated display primitives.
 
-Engineering values remain separate from visualization values. `summary.maxStress` is based on raw element von Mises stress, while the surface stress field is a recovered nodal field marked with `visualizationSource: "nodal_recovered_surface_average"` and `engineeringSource: "element_von_mises"`.
+Engineering values remain separate from visualization values. `summary.maxStress` is based on raw element von Mises stress, while the `stress-surface` field is a recovered nodal MPa field marked with `visualizationSource: "volume_weighted_nodal_recovery"` and `engineeringSource: "raw_element_von_mises"`.
 
-Core emits a `stress-visualization` diagnostic with the engineering max, plot min/max, recovery method, smoothing pass count, surface mesh counts, field count, fixed/load centroids, and effective lever arm. This diagnostic is for renderer/debug visibility; safety factor and engineering max still use raw element stress.
+Core emits a `stress-visualization` diagnostic with the engineering max in MPa, plot min/max in MPa, recovery method, surface mesh counts, stress/displacement field counts, alignment status, fixed/load centroids, and effective lever arm. This diagnostic is for renderer/debug visibility; safety factor and engineering max still use raw element stress.
 
 ## Downstream Adapter Contract
 
@@ -40,3 +40,5 @@ The consuming app adapter should use these paths:
 - Convert Cloud FEA/Gmsh, uploaded mesh, procedural fixture, or future browser mesher output with `volumeMeshToModelJson`.
 - Use structured block meshes only for simple one-body rectangular cantilever/block/beam display models.
 - Reject complex geometry without actual mesh and route to Cloud FEA or mesh generation.
+
+For result rendering, downstream viewers should render `result.surfaceMesh.nodes` and `result.surfaceMesh.triangles` directly when a field such as `stress-surface` has a matching `surfaceMeshRef`. Vertex colors should come directly from `stress-surface.values`; nearest-sample interpolation is only a fallback for legacy results without a solver surface mesh.

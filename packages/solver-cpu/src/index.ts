@@ -27,9 +27,9 @@ export {
   computeTet4BMatrix,
   computeTet4ElementStiffness,
   computeVonMisesStress,
-  recoverNodalVonMisesFromElements,
   smoothNodalScalarField
 } from "./element";
+export { recoverNodalVonMisesFromElements } from "./recovery";
 export { solveDenseLinearSystem } from "./linear-solve";
 export {
   addSparseEntry,

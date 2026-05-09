@@ -1,6 +1,7 @@
 import { solvePreviewSdofTet4Cpu } from "./dynamic-preview-sdof";
 import { solveDynamicLinearTetMDOF } from "./dynamic-mdof";
 import { solveStaticLinearTet } from "./solver";
+import { validateCoreResult } from "@opencae/core";
 import type {
   CoreDynamicSolveResult,
   CoreStaticSolveResult,
@@ -29,6 +30,18 @@ export function solveCoreStatic(
       error: {
         code: "missing-core-result",
         message: "Static solve completed without a CoreSolveResult."
+      },
+      diagnostics: result.diagnostics
+    };
+  }
+  const validation = validateCoreResult(coreResult);
+  if (!validation.ok) {
+    return {
+      ok: false,
+      error: {
+        code: "result-validation-failed",
+        message: "Static Core result failed surface field alignment validation.",
+        report: validation
       },
       diagnostics: result.diagnostics
     };
@@ -65,6 +78,18 @@ export function solveCoreDynamic(
       error: {
         code: "missing-core-result",
         message: "Dynamic MDOF solve completed without a CoreSolveResult."
+      },
+      diagnostics: result.diagnostics
+    };
+  }
+  const validation = validateCoreResult(coreResult);
+  if (!validation.ok) {
+    return {
+      ok: false,
+      error: {
+        code: "result-validation-failed",
+        message: "Dynamic Core result failed surface field alignment validation.",
+        report: validation
       },
       diagnostics: result.diagnostics
     };

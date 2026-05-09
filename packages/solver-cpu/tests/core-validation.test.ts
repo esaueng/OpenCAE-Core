@@ -142,14 +142,25 @@ describe("Core validation suite static benchmarks", () => {
     if (!result.ok) return;
     const coreResult = result.result.coreResult;
     const surfaceMesh = coreResult?.surfaceMesh;
-    const stressField = coreResult?.fields.find((field) => field.id === "stress-von-mises-surface");
-    const displacementField = coreResult?.fields.find((field) => field.id === "displacement-magnitude-surface");
+    const stressField = coreResult?.fields.find((field) => field.id === "stress-surface");
+    const displacementField = coreResult?.fields.find((field) => field.id === "displacement-surface");
+    const engineeringStressField = coreResult?.fields.find((field) => field.id === "stress-von-mises-element");
+    const safetyFactorField = coreResult?.fields.find((field) => field.id === "safety-factor");
 
     expect(surfaceMesh).toBeDefined();
     expect(stressField?.location).toBe("node");
+    expect(stressField?.units).toBe("MPa");
     expect(stressField?.surfaceMeshRef).toBe(surfaceMesh?.id);
+    expect(stressField?.visualizationSource).toBe("volume_weighted_nodal_recovery");
+    expect(stressField?.engineeringSource).toBe("raw_element_von_mises");
     expect(stressField?.values).toHaveLength(surfaceMesh?.nodes.length ?? -1);
+    expect(displacementField?.units).toBe("mm");
     expect(displacementField?.values).toHaveLength(surfaceMesh?.nodes.length ?? -1);
+    expect(displacementField?.vectors).toHaveLength(surfaceMesh?.nodes.length ?? -1);
+    expect(engineeringStressField?.location).toBe("element");
+    expect(engineeringStressField?.surfaceMeshRef).toBeUndefined();
+    expect(coreResult?.summary.maxStress).toBe(engineeringStressField?.max);
+    expect(coreResult?.summary.safetyFactor).toBe(safetyFactorField?.min);
     expect(new Set(stressField?.values.map((value) => value.toPrecision(8))).size).toBeGreaterThan(24);
 
     const fixedStress = averageStressNearX(surfaceMesh!, stressField!.values, 0, 0.025);
@@ -178,18 +189,20 @@ describe("Core validation suite static benchmarks", () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     const coreResult = result.result.coreResult;
-    const stressField = coreResult?.fields.find((field) => field.id === "stress-von-mises-surface");
+    const stressField = coreResult?.fields.find((field) => field.id === "stress-surface");
+    const displacementField = coreResult?.fields.find((field) => field.id === "displacement-surface");
     const diagnostic = coreResult?.diagnostics.find(isStressVisualizationDiagnostic);
 
     expect(diagnostic).toBeDefined();
-    expect(diagnostic?.engineeringStressMax).toBe(coreResult?.summary.maxStress);
-    expect(diagnostic?.plotStressMin).toBe(stressField?.min);
-    expect(diagnostic?.plotStressMax).toBe(stressField?.max);
-    expect(diagnostic?.stressRecoveryMethod).toBe("volume_weighted_nodal_average");
-    expect(diagnostic?.smoothingIterations).toBe(1);
+    expect(diagnostic?.engineeringStressMaxMpa).toBeCloseTo((coreResult?.summary.maxStress ?? 0) / 1_000_000, 12);
+    expect(diagnostic?.plotStressMinMpa).toBe(stressField?.min);
+    expect(diagnostic?.plotStressMaxMpa).toBe(stressField?.max);
+    expect(diagnostic?.stressRecoveryMethod).toBe("volume_weighted_nodal_recovery");
     expect(diagnostic?.surfaceNodeCount).toBe(coreResult?.surfaceMesh?.nodes.length);
     expect(diagnostic?.surfaceTriangleCount).toBe(coreResult?.surfaceMesh?.triangles.length);
-    expect(diagnostic?.fieldValueCount).toBe(stressField?.values.length);
+    expect(diagnostic?.stressFieldValueCount).toBe(stressField?.values.length);
+    expect(diagnostic?.displacementFieldValueCount).toBe(displacementField?.values.length);
+    expect(diagnostic?.fieldSurfaceAlignment).toBe("ok");
     expect(diagnostic?.fixedCentroid[0]).toBeCloseTo(0, 12);
     expect(diagnostic?.loadCentroid[0]).toBeCloseTo(0.18, 12);
     expect(diagnostic?.effectiveLeverArmMm).toBeCloseTo(180, 8);
@@ -667,14 +680,15 @@ function uniqueRounded(values: number[], decimals: number): Set<number> {
 }
 
 function isStressVisualizationDiagnostic(value: unknown): value is {
-  engineeringStressMax: number;
-  plotStressMin: number;
-  plotStressMax: number;
+  engineeringStressMaxMpa: number;
+  plotStressMinMpa: number;
+  plotStressMaxMpa: number;
   stressRecoveryMethod: string;
-  smoothingIterations: number;
   surfaceNodeCount: number;
   surfaceTriangleCount: number;
-  fieldValueCount: number;
+  stressFieldValueCount: number;
+  displacementFieldValueCount: number;
+  fieldSurfaceAlignment: string;
   fixedCentroid: [number, number, number];
   loadCentroid: [number, number, number];
   effectiveLeverArmMm: number;
@@ -683,6 +697,6 @@ function isStressVisualizationDiagnostic(value: unknown): value is {
     typeof value === "object" &&
     value !== null &&
     "stressRecoveryMethod" in value &&
-    (value as { stressRecoveryMethod?: unknown }).stressRecoveryMethod === "volume_weighted_nodal_average"
+    (value as { stressRecoveryMethod?: unknown }).stressRecoveryMethod === "volume_weighted_nodal_recovery"
   );
 }

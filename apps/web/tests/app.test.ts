@@ -39,13 +39,13 @@ describe("renderCpuSolveSummary", () => {
           },
           fields: [
             {
-              id: "stress-von-mises-surface",
+              id: "stress-surface",
               type: "stress",
               location: "node",
-              values: [1_000_000, 8_000_000],
-              min: 1_000_000,
-              max: 8_000_000,
-              units: "Pa",
+              values: [1, 8],
+              min: 1,
+              max: 8,
+              units: "MPa",
               surfaceMeshRef: "solver-surface"
             }
           ],
