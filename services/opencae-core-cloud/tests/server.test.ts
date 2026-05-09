@@ -53,8 +53,16 @@ describe("OpenCAE Core Cloud runner", () => {
     });
 
     expect(response.status).toBe(200);
-    const body = response.body as { result: { provenance: { kind: string; resultSource: string; solver: string } } };
-    expect(body.result.provenance).toMatchObject({
+    const body = response.body as {
+      ok?: unknown;
+      result?: unknown;
+      fields: unknown[];
+      provenance: { kind: string; resultSource: string; solver: string };
+    };
+    expect(body.ok).toBeUndefined();
+    expect(body.result).toBeUndefined();
+    expect(body.fields.length).toBeGreaterThan(0);
+    expect(body.provenance).toMatchObject({
       kind: "opencae_core_fea",
       resultSource: "computed",
       solver: "opencae-core-sparse-tet"
@@ -69,8 +77,16 @@ describe("OpenCAE Core Cloud runner", () => {
     });
 
     expect(response.status).toBe(200);
-    const body = response.body as { result: { provenance: { kind: string; resultSource: string; solver: string } } };
-    expect(body.result.provenance).toMatchObject({
+    const body = response.body as {
+      ok?: unknown;
+      result?: unknown;
+      fields: Array<{ frameIndex?: number; timeSeconds?: number }>;
+      provenance: { kind: string; resultSource: string; solver: string };
+    };
+    expect(body.ok).toBeUndefined();
+    expect(body.result).toBeUndefined();
+    expect(body.fields.some((field) => Number.isInteger(field.frameIndex) && Number.isFinite(field.timeSeconds))).toBe(true);
+    expect(body.provenance).toMatchObject({
       kind: "opencae_core_fea",
       resultSource: "computed",
       solver: "opencae-core-mdof-tet"

@@ -82,12 +82,7 @@ export function solveResponse(request: unknown): CloudResponse {
 
   return {
     status: 200,
-    body: {
-      ok: true,
-      runId: request.runId,
-      result: result.result,
-      diagnostics: result.diagnostics
-    }
+    body: result.result
   };
 }
 
