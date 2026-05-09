@@ -52,6 +52,7 @@ export { solvePreviewSdofTet4Cpu } from "./dynamic";
 export { solveDynamicLinearTetMDOF, solveDynamicMdofTet4Cpu } from "./dynamic-mdof";
 export { solveStaticLinearTet, solveStaticLinearTet4Cpu } from "./solver";
 export { solveStaticLinearTetSparse } from "./static-sparse";
+export { SOLVER_CPU_VERSION } from "./results";
 export {
   solveCoreDynamic,
   solveCorePreviewDynamic,

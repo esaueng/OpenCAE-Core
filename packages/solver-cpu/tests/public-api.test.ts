@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 import { singleTetStaticFixture } from "@opencae/examples";
 import { validateCoreResult, type OpenCAEModelJson } from "@opencae/core";
 import {
+  SOLVER_CPU_VERSION,
   solveCoreDynamic,
   solveCorePreviewDynamic,
   solveCoreStatic,
@@ -42,6 +43,10 @@ describe("public Core solver APIs", () => {
     expect(typeof solveStaticLinearTet).toBe("function");
     expect(typeof solveStaticLinearTetSparse).toBe("function");
     expect(typeof solveCoreStatic).toBe("function");
+  });
+
+  test("exports the solver CPU version from the package entrypoint", () => {
+    expect(SOLVER_CPU_VERSION).toBe("0.1.1");
   });
 
   test("solveCoreStatic returns a validated CoreSolveResult", () => {
