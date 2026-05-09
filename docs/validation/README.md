@@ -30,6 +30,8 @@ Accurate result visualization should use the solver surface mesh returned by Cor
 
 Engineering values remain separate from visualization values. `summary.maxStress` is based on raw element von Mises stress, while the surface stress field is a recovered nodal field marked with `visualizationSource: "nodal_recovered_surface_average"` and `engineeringSource: "element_von_mises"`.
 
+Core emits a `stress-visualization` diagnostic with the engineering max, plot min/max, recovery method, smoothing pass count, surface mesh counts, field count, fixed/load centroids, and effective lever arm. This diagnostic is for renderer/debug visibility; safety factor and engineering max still use raw element stress.
+
 ## Downstream Adapter Contract
 
 The consuming app adapter should use these paths:

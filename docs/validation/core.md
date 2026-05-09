@@ -94,6 +94,8 @@ Core results include a solver surface mesh derived from the solved volume mesh. 
 
 Static and dynamic Core results expose surface displacement magnitudes and recovered nodal von Mises stress fields for visualization. The recovered stress field is tagged as `nodal_recovered_surface_average`; it is not used as the engineering max. `summary.maxStress` and safety factor calculations stay tied to raw element von Mises values.
 
+The plot stress field is built by volume-weighted nodal recovery from connected element von Mises stress, followed by one visualization-only Laplacian smoothing pass. The `stress-visualization` diagnostic records engineering max stress, plot min/max stress, `volume_weighted_nodal_average`, smoothing iteration count, surface node/triangle counts, field value count, fixed/load centroids, and effective lever arm in millimeters.
+
 ## Bracket Regression Fixture
 
 The validation suite includes a small bracket-like Tet mesh with:

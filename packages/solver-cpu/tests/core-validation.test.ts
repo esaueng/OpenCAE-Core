@@ -125,6 +125,76 @@ describe("Core validation suite static benchmarks", () => {
     expect(Number.isFinite(coreResult?.summary.safetyFactor)).toBe(true);
   });
 
+  test("cantilever stress contour uses aligned recovered surface nodal values", () => {
+    const model = createStructuredCantileverModel({
+      length: 0.18,
+      width: 0.024,
+      height: 0.024,
+      force: 500,
+      xDivisions: 16,
+      yDivisions: 3,
+      zDivisions: 3
+    });
+
+    const result = solveStaticLinearTet(model, { method: "sparse", tolerance: 1e-10, maxIterations: 20000 });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const coreResult = result.result.coreResult;
+    const surfaceMesh = coreResult?.surfaceMesh;
+    const stressField = coreResult?.fields.find((field) => field.id === "stress-von-mises-surface");
+    const displacementField = coreResult?.fields.find((field) => field.id === "displacement-magnitude-surface");
+
+    expect(surfaceMesh).toBeDefined();
+    expect(stressField?.location).toBe("node");
+    expect(stressField?.surfaceMeshRef).toBe(surfaceMesh?.id);
+    expect(stressField?.values).toHaveLength(surfaceMesh?.nodes.length ?? -1);
+    expect(displacementField?.values).toHaveLength(surfaceMesh?.nodes.length ?? -1);
+    expect(new Set(stressField?.values.map((value) => value.toPrecision(8))).size).toBeGreaterThan(24);
+
+    const fixedStress = averageStressNearX(surfaceMesh!, stressField!.values, 0, 0.025);
+    const freeStress = averageStressNearX(surfaceMesh!, stressField!.values, 0.18, 0.025);
+    expect(fixedStress).toBeGreaterThan(freeStress * 1.6);
+
+    const highStressNodes = highStressSurfaceNodes(surfaceMesh!, stressField!.values, 0.85);
+    expect(highStressNodes.length).toBeGreaterThan(8);
+    expect(uniqueRounded(highStressNodes.map((entry) => entry.node[1]), 5).size).toBeGreaterThan(1);
+    expect(uniqueRounded(highStressNodes.map((entry) => entry.node[2]), 5).size).toBeGreaterThan(1);
+  });
+
+  test("static Core result includes stress visualization diagnostics", () => {
+    const model = createStructuredCantileverModel({
+      length: 0.18,
+      width: 0.024,
+      height: 0.024,
+      force: 500,
+      xDivisions: 16,
+      yDivisions: 3,
+      zDivisions: 3
+    });
+
+    const result = solveStaticLinearTet(model, { method: "sparse", tolerance: 1e-10, maxIterations: 20000 });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const coreResult = result.result.coreResult;
+    const stressField = coreResult?.fields.find((field) => field.id === "stress-von-mises-surface");
+    const diagnostic = coreResult?.diagnostics.find(isStressVisualizationDiagnostic);
+
+    expect(diagnostic).toBeDefined();
+    expect(diagnostic?.engineeringStressMax).toBe(coreResult?.summary.maxStress);
+    expect(diagnostic?.plotStressMin).toBe(stressField?.min);
+    expect(diagnostic?.plotStressMax).toBe(stressField?.max);
+    expect(diagnostic?.stressRecoveryMethod).toBe("volume_weighted_nodal_average");
+    expect(diagnostic?.smoothingIterations).toBe(1);
+    expect(diagnostic?.surfaceNodeCount).toBe(coreResult?.surfaceMesh?.nodes.length);
+    expect(diagnostic?.surfaceTriangleCount).toBe(coreResult?.surfaceMesh?.triangles.length);
+    expect(diagnostic?.fieldValueCount).toBe(stressField?.values.length);
+    expect(diagnostic?.fixedCentroid[0]).toBeCloseTo(0, 12);
+    expect(diagnostic?.loadCentroid[0]).toBeCloseTo(0.18, 12);
+    expect(diagnostic?.effectiveLeverArmMm).toBeCloseTo(180, 8);
+  });
+
   test("pressure patch total force equals pressure times area and balances reactions", () => {
     const pressure = 25;
     const model = createHexBarModel({
@@ -565,4 +635,54 @@ function surfaceMeshComponentCount(surfaceMesh: SolverSurfaceMesh): number {
     }
   }
   return components;
+}
+
+function averageStressNearX(
+  surfaceMesh: SolverSurfaceMesh,
+  values: number[],
+  x: number,
+  tolerance: number
+): number {
+  const samples = surfaceMesh.nodes
+    .map((node, index) => ({ node, value: values[index] ?? 0 }))
+    .filter((entry) => Math.abs(entry.node[0] - x) <= tolerance);
+  return mean(samples.map((entry) => entry.value));
+}
+
+function highStressSurfaceNodes(
+  surfaceMesh: SolverSurfaceMesh,
+  values: number[],
+  thresholdFraction: number
+): { node: [number, number, number]; value: number }[] {
+  const max = Math.max(...values);
+  const threshold = max * thresholdFraction;
+  return surfaceMesh.nodes
+    .map((node, index) => ({ node, value: values[index] ?? 0 }))
+    .filter((entry) => entry.value >= threshold);
+}
+
+function uniqueRounded(values: number[], decimals: number): Set<number> {
+  const scale = 10 ** decimals;
+  return new Set(values.map((value) => Math.round(value * scale) / scale));
+}
+
+function isStressVisualizationDiagnostic(value: unknown): value is {
+  engineeringStressMax: number;
+  plotStressMin: number;
+  plotStressMax: number;
+  stressRecoveryMethod: string;
+  smoothingIterations: number;
+  surfaceNodeCount: number;
+  surfaceTriangleCount: number;
+  fieldValueCount: number;
+  fixedCentroid: [number, number, number];
+  loadCentroid: [number, number, number];
+  effectiveLeverArmMm: number;
+} {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "stressRecoveryMethod" in value &&
+    (value as { stressRecoveryMethod?: unknown }).stressRecoveryMethod === "volume_weighted_nodal_average"
+  );
 }

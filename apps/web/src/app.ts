@@ -90,9 +90,17 @@ function renderCapability(capability: WebGPUCapability): string {
   `;
 }
 
-function renderCpuSolveSummary(result: StaticLinearTet4CpuSolveResult): string {
+export function renderCpuSolveSummary(result: StaticLinearTet4CpuSolveResult): string {
   const modifier = result.ok ? "status-available" : "status-unavailable";
   const diagnostics = result.diagnostics;
+  const coreResult = result.ok ? result.result.coreResult : undefined;
+  const engineeringStress = coreResult?.summary.maxStress ?? diagnostics?.maxVonMisesStress;
+  const engineeringStressUnits = coreResult?.summary.maxStressUnits;
+  const plotStressField = coreResult?.fields.find((field) => field.id === "stress-von-mises-surface");
+  const showPlotStress =
+    engineeringStress !== undefined &&
+    plotStressField !== undefined &&
+    Math.abs(engineeringStress - plotStressField.max) > Math.max(Math.abs(engineeringStress), 1) * 1e-9;
 
   return `
     <section class="status phase2-status ${modifier}">
@@ -128,8 +136,22 @@ function renderCpuSolveSummary(result: StaticLinearTet4CpuSolveResult): string {
         </div>
         <div>
           <dt>Max von Mises stress</dt>
-          <dd>${formatNumber(diagnostics?.maxVonMisesStress)}</dd>
+          <dd>${formatStress(engineeringStress, engineeringStressUnits)}</dd>
         </div>
+        ${
+          showPlotStress
+            ? `
+              <div>
+                <dt>Engineering max</dt>
+                <dd>${formatStress(engineeringStress, engineeringStressUnits)}</dd>
+              </div>
+              <div>
+                <dt>Plot max</dt>
+                <dd>${formatStress(plotStressField.max, plotStressField.units)}</dd>
+              </div>
+            `
+            : ""
+        }
       </dl>
       ${result.ok ? "" : `<p>${escapeHtml(result.error.message)}</p>`}
     </section>
@@ -233,4 +255,17 @@ function formatNumber(value: number | undefined): string {
   }
 
   return Number.isFinite(value) ? value.toExponential(4) : "n/a";
+}
+
+function formatStress(value: number | undefined, units: string | undefined): string {
+  if (value === undefined || !Number.isFinite(value)) {
+    return "n/a";
+  }
+  if (units === "Pa") {
+    return `${(value / 1_000_000).toExponential(4)} MPa`;
+  }
+  if (units && units.length > 0) {
+    return `${value.toExponential(4)} ${units}`;
+  }
+  return value.toExponential(4);
 }

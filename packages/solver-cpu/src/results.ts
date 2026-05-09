@@ -1,14 +1,18 @@
 import {
   createCoreResultField,
   solverSurfaceMeshFromModel,
+  type BoundaryConditionJson,
   type CoreResultField,
   type CoreSolveProvenance,
   type CoreSolveResult,
+  type LoadJson,
   type NormalizedOpenCAEModel,
   type SolverSurfaceMesh
 } from "@opencae/core";
-import { recoverNodalVonMisesFromElements } from "./element";
+import { recoverNodalVonMisesFromElements, smoothNodalScalarField } from "./element";
 import type { DynamicTet4CpuResult, DynamicTet4CpuDiagnostics, StaticLinearTet4CpuResult, CpuSolverDiagnostics } from "./types";
+
+const VISUALIZATION_SMOOTHING_ITERATIONS = 1;
 
 export function staticCoreResultFromSolve(
   model: NormalizedOpenCAEModel,
@@ -21,9 +25,11 @@ export function staticCoreResultFromSolve(
   const maxDisplacement = maxNodeVectorNorm(result.displacement);
   const reactionForce = vectorSumMagnitude(result.reactionForce);
   const surfaceDisplacement = surfaceVectorMagnitudes(surfaceMesh, result.displacement);
+  const recoveredNodalVonMises = recoverNodalVonMisesFromElements(model, result.vonMises);
+  const plotNodalVonMises = smoothNodalScalarField(model, recoveredNodalVonMises, VISUALIZATION_SMOOTHING_ITERATIONS);
   const surfaceVonMises = surfaceNodeScalars(
     surfaceMesh,
-    recoverNodalVonMisesFromElements(model, result.vonMises, { surfaceOnly: true })
+    plotNodalVonMises
   );
   const fields: CoreResultField[] = [
     createCoreResultField({
@@ -70,7 +76,8 @@ export function staticCoreResultFromSolve(
   }
 
   const minSafetyFactor = positiveMin(safetyFactor);
-  const resultDiagnostics: unknown[] = [{ ...diagnostics }];
+  const stressDiagnostic = stressVisualizationDiagnostic(model, surfaceMesh, surfaceVonMises, maxAbs(result.vonMises));
+  const resultDiagnostics: unknown[] = [{ ...diagnostics }, stressDiagnostic];
   if (maxDisplacement === 0 && reactionForce > 1e-12) {
     resultDiagnostics.push({
       id: "zero-displacement-nonzero-load",
@@ -105,14 +112,18 @@ export function dynamicCoreResultFromSolve(
   const surfaceMesh = solverSurfaceMeshFromModel(model);
   const provenance = coreProvenance(model, "opencae-core-mdof-tet");
   const fields: CoreResultField[] = [];
+  let latestSurfaceVonMises: number[] = [];
   for (const frame of result.frames) {
     const surfaceDisplacement = surfaceVectorMagnitudes(surfaceMesh, frame.displacement.values);
     const surfaceVelocity = surfaceVectorMagnitudes(surfaceMesh, frame.velocity.values);
     const surfaceAcceleration = surfaceVectorMagnitudes(surfaceMesh, frame.acceleration.values);
+    const recoveredNodalVonMises = recoverNodalVonMisesFromElements(model, frame.vonMises.values);
+    const plotNodalVonMises = smoothNodalScalarField(model, recoveredNodalVonMises, VISUALIZATION_SMOOTHING_ITERATIONS);
     const surfaceVonMises = surfaceNodeScalars(
       surfaceMesh,
-      recoverNodalVonMisesFromElements(model, frame.vonMises.values, { surfaceOnly: true })
+      plotNodalVonMises
     );
+    latestSurfaceVonMises = surfaceVonMises;
     fields.push(
       createCoreResultField({
         id: `frame-${frame.frameIndex}-displacement`,
@@ -214,7 +225,15 @@ export function dynamicCoreResultFromSolve(
     },
     fields,
     surfaceMesh,
-    diagnostics: [{ ...diagnostics }],
+    diagnostics: [
+      { ...diagnostics },
+      stressVisualizationDiagnostic(
+        model,
+        surfaceMesh,
+        latestSurfaceVonMises,
+        diagnostics.maxVonMisesStress
+      )
+    ],
     provenance
   };
 }
@@ -293,6 +312,123 @@ function surfaceVectorMagnitudes(surfaceMesh: SolverSurfaceMesh, vector: Float64
 
 function surfaceNodeScalars(surfaceMesh: SolverSurfaceMesh, nodalValues: Float64Array): number[] {
   return (surfaceMesh.nodeMap ?? []).map((volumeNode) => nodalValues[volumeNode] ?? 0);
+}
+
+function stressVisualizationDiagnostic(
+  model: NormalizedOpenCAEModel,
+  surfaceMesh: SolverSurfaceMesh,
+  plotValues: number[],
+  engineeringStressMax: number
+): {
+  id: "stress-visualization";
+  engineeringStressMax: number;
+  plotStressMin: number;
+  plotStressMax: number;
+  stressRecoveryMethod: "volume_weighted_nodal_average";
+  smoothingIterations: number;
+  surfaceNodeCount: number;
+  surfaceTriangleCount: number;
+  fieldValueCount: number;
+  fixedCentroid: [number, number, number];
+  loadCentroid: [number, number, number];
+  effectiveLeverArmMm: number;
+} {
+  const activeStep = firstStructuralStep(model);
+  const fixedCentroid = centroidForBoundaryConditions(model, activeStep?.boundaryConditions ?? []);
+  const loadCentroid = centroidForLoads(model, activeStep?.loads ?? []);
+  return {
+    id: "stress-visualization",
+    engineeringStressMax,
+    plotStressMin: plotValues.length > 0 ? Math.min(...plotValues) : 0,
+    plotStressMax: plotValues.length > 0 ? Math.max(...plotValues) : 0,
+    stressRecoveryMethod: "volume_weighted_nodal_average",
+    smoothingIterations: VISUALIZATION_SMOOTHING_ITERATIONS,
+    surfaceNodeCount: surfaceMesh.nodes.length,
+    surfaceTriangleCount: surfaceMesh.triangles.length,
+    fieldValueCount: plotValues.length,
+    fixedCentroid,
+    loadCentroid,
+    effectiveLeverArmMm: distance(fixedCentroid, loadCentroid) * lengthToMmScale(model)
+  };
+}
+
+function firstStructuralStep(model: NormalizedOpenCAEModel): { boundaryConditions: string[]; loads: string[] } | undefined {
+  return model.steps.find((step) => step.type === "staticLinear" || step.type === "dynamicLinear");
+}
+
+function centroidForBoundaryConditions(model: NormalizedOpenCAEModel, boundaryConditionNames: string[]): [number, number, number] {
+  const active = new Set(boundaryConditionNames);
+  const nodeSetNames = new Set<string>();
+  for (const boundaryCondition of model.boundaryConditions) {
+    if (active.has(boundaryCondition.name) && isFixedBoundaryCondition(boundaryCondition)) {
+      nodeSetNames.add(boundaryCondition.nodeSet);
+    }
+  }
+  return centroidForNodeSetNames(model, nodeSetNames);
+}
+
+function centroidForLoads(model: NormalizedOpenCAEModel, loadNames: string[]): [number, number, number] {
+  const active = new Set(loadNames);
+  const nodeIds = new Set<number>();
+  for (const load of model.loads) {
+    if (!active.has(load.name)) continue;
+    addLoadNodes(model, load, nodeIds);
+  }
+  return centroidForNodes(model, nodeIds);
+}
+
+function addLoadNodes(model: NormalizedOpenCAEModel, load: LoadJson, nodeIds: Set<number>): void {
+  if (load.type === "nodalForce") {
+    addNodeSetNodes(model, load.nodeSet, nodeIds);
+    return;
+  }
+  if (load.type === "surfaceForce" || load.type === "pressure") {
+    const surfaceSet = model.surfaceSets.find((set) => set.name === load.surfaceSet);
+    if (!surfaceSet) return;
+    const facetById = new Map(model.surfaceFacets.map((facet) => [facet.id, facet]));
+    for (const facetId of surfaceSet.facets) {
+      const facet = facetById.get(facetId);
+      if (!facet) continue;
+      for (const node of facet.nodes) nodeIds.add(node);
+    }
+  }
+}
+
+function centroidForNodeSetNames(model: NormalizedOpenCAEModel, nodeSetNames: Set<string>): [number, number, number] {
+  const nodeIds = new Set<number>();
+  for (const nodeSetName of nodeSetNames) addNodeSetNodes(model, nodeSetName, nodeIds);
+  return centroidForNodes(model, nodeIds);
+}
+
+function addNodeSetNodes(model: NormalizedOpenCAEModel, nodeSetName: string, nodeIds: Set<number>): void {
+  const nodeSet = model.nodeSets.find((candidate) => candidate.name === nodeSetName);
+  if (!nodeSet) return;
+  for (const node of nodeSet.nodes) nodeIds.add(node);
+}
+
+function centroidForNodes(model: NormalizedOpenCAEModel, nodeIds: Set<number>): [number, number, number] {
+  if (nodeIds.size === 0) return [0, 0, 0];
+  let x = 0;
+  let y = 0;
+  let z = 0;
+  for (const node of nodeIds) {
+    x += model.nodes.coordinates[node * 3] ?? 0;
+    y += model.nodes.coordinates[node * 3 + 1] ?? 0;
+    z += model.nodes.coordinates[node * 3 + 2] ?? 0;
+  }
+  return [x / nodeIds.size, y / nodeIds.size, z / nodeIds.size];
+}
+
+function isFixedBoundaryCondition(boundaryCondition: BoundaryConditionJson): boolean {
+  return boundaryCondition.type === "fixed";
+}
+
+function distance(a: [number, number, number], b: [number, number, number]): number {
+  return Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+}
+
+function lengthToMmScale(model: NormalizedOpenCAEModel): number {
+  return model.coordinateSystem.solverUnits === "mm-N-s-MPa" ? 1 : 1000;
 }
 
 function maxAbs(values: Float64Array): number {
