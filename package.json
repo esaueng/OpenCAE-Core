@@ -1,7 +1,7 @@
 {
   "name": "opencae-core",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Browser-local WebGPU finite element analysis core for web applications.",
   "type": "module",
   "scripts": {

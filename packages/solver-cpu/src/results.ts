@@ -16,7 +16,7 @@ import {
 import { recoverNodalVonMisesFromElements } from "./recovery";
 import type { DynamicTet4CpuResult, DynamicTet4CpuDiagnostics, StaticLinearTet4CpuResult, CpuSolverDiagnostics } from "./types";
 
-export const SOLVER_CPU_VERSION = "0.1.0";
+export const SOLVER_CPU_VERSION = "0.1.1";
 
 export function staticCoreResultFromSolve(
   model: NormalizedOpenCAEModel,
