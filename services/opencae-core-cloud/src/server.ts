@@ -303,7 +303,7 @@ function sendJson(response: ServerResponse, result: CloudResponse): void {
 const entrypoint = process.argv[1] ?? "";
 if (process.env.NODE_ENV !== "test" && (entrypoint.endsWith("server.js") || entrypoint.endsWith("server.bundle.js"))) {
   const port = Number.parseInt(process.env.PORT ?? "8080", 10);
-  createCoreCloudServer().listen(port, () => {
+  createCoreCloudServer().listen(port, "0.0.0.0", () => {
     console.log(`${SERVICE_NAME} listening on ${port}`);
   });
 }

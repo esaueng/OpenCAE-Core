@@ -18,6 +18,7 @@ declare module "node:http" {
     handler: (request: IncomingMessage, response: ServerResponse) => void | Promise<void>
   ): {
     listen(port: number, callback?: () => void): void;
+    listen(port: number, host: string, callback?: () => void): void;
   };
 }
 
