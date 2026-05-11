@@ -93,7 +93,7 @@ describe("Core Cloud volume mesh generation", () => {
     const mesh = generateStructuredBlockCoreVolumeMesh({
       kind: "structured_block",
       units: "mm",
-      geometryDescriptor: { length: 20, width: 10, height: 8 }
+      descriptor: { length: 20, width: 10, height: 8 }
     });
 
     expect(mesh.metadata.source).toBe("structured_block");
@@ -117,7 +117,17 @@ describe("Core Cloud volume mesh generation", () => {
       kind: "sample_procedural",
       sampleId: "bracket",
       units: "mm",
-      geometryDescriptor: { meshSize: 24 }
+      descriptor: {
+        base: { length: 120, width: 34, height: 10 },
+        upright: { height: 88, width: 18, thickness: 34 },
+        gusset: { length: 72, height: 58, thickness: 34 },
+        holes: [
+          { id: "hole-base-1", center: [32, 17, 5], diameter: 12 },
+          { id: "hole-base-2", center: [88, 17, 5], diameter: 12 },
+          { id: "hole-upright-1", center: [9, 17, 56], diameter: 10 }
+        ],
+        meshSize: 24
+      }
     });
 
     expect(mesh.metadata.connectedComponentCount).toBe(1);
@@ -125,6 +135,18 @@ describe("Core Cloud volume mesh generation", () => {
     expect(mesh.surfaceSets.find((set) => set.name === "fixed_support")?.facets.length).toBeGreaterThan(0);
     expect(mesh.surfaceSets.find((set) => set.name === "load_surface")?.facets.length).toBeGreaterThan(0);
     expect(mesh.surfaceSets.find((set) => set.name === "hole_surfaces")?.facets.length).toBeGreaterThan(0);
+  });
+
+  test("keeps geometryDescriptor as a compatibility alias", () => {
+    const mesh = generateStructuredBlockCoreVolumeMesh({
+      kind: "structured_block",
+      units: "mm",
+      geometryDescriptor: { length: 30, width: 12, height: 6 }
+    });
+
+    expect(mesh.metadata.source).toBe("structured_block");
+    expect(mesh.metadata.nodeCount).toBe(8);
+    expect(mesh.nodes.coordinates[3]).toBeCloseTo(0.03);
   });
 });
 

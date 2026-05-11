@@ -302,7 +302,7 @@ describe("OpenCAE Core Cloud runner", () => {
         kind: "sample_procedural",
         sampleId: "bracket",
         units: "mm",
-        geometryDescriptor: { meshSize: 24 }
+        descriptor: { meshSize: 24 }
       },
       solverSettings: { maxIterations: 20000, tolerance: 1e-8 }
     });
@@ -343,7 +343,7 @@ describe("OpenCAE Core Cloud runner", () => {
         kind: "sample_procedural",
         sampleId: "bracket",
         units: "mm",
-        geometryDescriptor: { meshSize: 28 }
+        descriptor: { meshSize: 28 }
       },
       solverSettings: { maxFrames: 5 }
     });

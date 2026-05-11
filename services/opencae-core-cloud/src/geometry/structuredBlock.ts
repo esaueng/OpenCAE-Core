@@ -5,7 +5,7 @@ export function generateStructuredBlockCoreVolumeMesh(geometry: CloudGeometrySou
   if (geometry.kind !== "structured_block") {
     throw new Error("Structured block mesh generation requires geometry.kind=structured_block.");
   }
-  const descriptor = geometry.geometryDescriptor ?? {};
+  const descriptor = geometry.descriptor ?? geometry.geometryDescriptor ?? {};
   const scale = geometry.units === "m" ? 1 : 0.001;
   const length = positiveNumber(descriptor.length, 100) * scale;
   const width = positiveNumber(descriptor.width ?? descriptor.depth, 30) * scale;

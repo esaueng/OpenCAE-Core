@@ -16,6 +16,7 @@ export type CloudGeometrySource = {
   filename?: string;
   contentBase64?: string;
   units?: "mm" | "m";
+  descriptor?: Record<string, unknown>;
   geometryDescriptor?: Record<string, unknown>;
 };
 

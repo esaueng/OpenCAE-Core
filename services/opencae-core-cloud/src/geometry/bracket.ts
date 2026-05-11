@@ -2,6 +2,31 @@ import { generateGmshVolumeMeshFromGeo } from "../mesh/gmsh";
 import type { CloudGeometrySource, CoreVolumeMeshArtifact, SourceSelectionMetadata } from "../types";
 
 export type BracketGeometryDescriptor = {
+  base?: {
+    length?: number;
+    width?: number;
+    height?: number;
+  };
+  upright?: {
+    height?: number;
+    width?: number;
+    thickness?: number;
+    depth?: number;
+  };
+  gusset?: {
+    length?: number;
+    height?: number;
+    thickness?: number;
+  };
+  rib?: {
+    length?: number;
+    height?: number;
+    thickness?: number;
+  };
+  holes?: Array<{
+    center?: [number, number, number];
+    diameter?: number;
+  }>;
   baseLength?: number;
   baseDepth?: number;
   baseHeight?: number;
@@ -33,7 +58,7 @@ export async function generateBracketCoreVolumeMesh(geometry: CloudGeometrySourc
   if (geometry.kind !== "sample_procedural" || geometry.sampleId !== "bracket") {
     throw new Error("Bracket procedural mesh generation requires sample_procedural bracket geometry.");
   }
-  const descriptor = bracketDescriptor(geometry.geometryDescriptor);
+  const descriptor = bracketDescriptor(geometry.descriptor ?? geometry.geometryDescriptor);
   return generateGmshVolumeMeshFromGeo(bracketGeoScript(descriptor), {
     units: "mm",
     sourceSelectionRefs: bracketGeometrySourceMetadata(),
@@ -42,23 +67,29 @@ export async function generateBracketCoreVolumeMesh(geometry: CloudGeometrySourc
 }
 
 export function bracketGeoScript(descriptor: BracketGeometryDescriptor = {}): string {
-  const baseLength = positive(descriptor.baseLength, 120);
-  const baseDepth = positive(descriptor.baseDepth ?? descriptor.uprightDepth, 34);
-  const baseHeight = positive(descriptor.baseHeight, 10);
-  const uprightHeight = positive(descriptor.uprightHeight, 88);
-  const uprightWidth = positive(descriptor.uprightWidth, 18);
-  const uprightDepth = positive(descriptor.uprightDepth, baseDepth);
-  const gussetLength = positive(descriptor.gussetLength, 72);
-  const gussetHeight = positive(descriptor.gussetHeight, 58);
+  const baseLength = positive(descriptor.base?.length ?? descriptor.baseLength, 120);
+  const baseDepth = positive(descriptor.base?.width ?? descriptor.upright?.thickness ?? descriptor.upright?.depth ?? descriptor.baseDepth ?? descriptor.uprightDepth, 34);
+  const baseHeight = positive(descriptor.base?.height ?? descriptor.baseHeight, 10);
+  const uprightHeight = positive(descriptor.upright?.height ?? descriptor.uprightHeight, 88);
+  const uprightWidth = positive(descriptor.upright?.width ?? descriptor.uprightWidth, 18);
+  const uprightDepth = positive(descriptor.upright?.thickness ?? descriptor.upright?.depth ?? descriptor.uprightDepth, baseDepth);
+  const gussetLength = positive(descriptor.gusset?.length ?? descriptor.rib?.length ?? descriptor.gussetLength, 72);
+  const gussetHeight = positive(descriptor.gusset?.height ?? descriptor.rib?.height ?? descriptor.gussetHeight, 58);
   const meshSize = positive(descriptor.meshSize, 18);
   const holeCenters = descriptor.holeCenters?.length
     ? descriptor.holeCenters
+    : descriptor.holes?.some((hole) => hole.center)
+      ? descriptor.holes.flatMap((hole) => hole.center ? [hole.center] : [])
     : [
         [32, baseDepth / 2, baseHeight / 2] as [number, number, number],
         [88, baseDepth / 2, baseHeight / 2] as [number, number, number],
         [uprightWidth / 2, baseDepth / 2, 56] as [number, number, number]
       ];
-  const holeDiameters = descriptor.holeDiameters?.length ? descriptor.holeDiameters : [12, 12, 10];
+  const holeDiameters = descriptor.holeDiameters?.length
+    ? descriptor.holeDiameters
+    : descriptor.holes?.some((hole) => typeof hole.diameter === "number")
+      ? descriptor.holes.map((hole) => positive(hole.diameter, 10))
+      : [12, 12, 10];
   const cylinderCommands = holeCenters.map((center, index) => {
     const radius = positive(holeDiameters[index], 10) / 2;
     const tag = 30 + index;
