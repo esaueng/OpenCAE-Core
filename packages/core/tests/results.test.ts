@@ -2,7 +2,9 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, test } from "vitest";
 import {
+  assertProductionSurfaceFieldInvariant,
   solverSurfaceMeshFromModel,
+  validateProductionSurfaceFieldInvariant,
   validateCoreResult,
   type CoreSolveResult
 } from "../src";
@@ -256,6 +258,91 @@ describe("Core result structures", () => {
         message: "Solver surface field length does not match surface mesh node count."
       })
     );
+  });
+
+  test("exports a production surface invariant helper for stress and displacement fields", () => {
+    const surfaceMesh = solverSurfaceMeshFromModel(createSingleTetModel());
+    const result: Pick<CoreSolveResult, "surfaceMesh" | "fields"> = {
+      surfaceMesh,
+      fields: [
+        {
+          id: "displacement-surface",
+          type: "displacement",
+          location: "node",
+          values: [0, 0.1, 0.2, 0.3],
+          vectors: [
+            [0, 0, 0],
+            [0, 0, 0.1],
+            [0, 0, 0.2],
+            [0, 0, 0.3]
+          ],
+          min: 0,
+          max: 0.3,
+          units: "mm",
+          surfaceMeshRef: surfaceMesh.id
+        },
+        {
+          id: "stress-surface",
+          type: "stress",
+          location: "node",
+          values: [1, 2, 3, 4],
+          min: 1,
+          max: 4,
+          units: "MPa",
+          surfaceMeshRef: surfaceMesh.id
+        }
+      ]
+    };
+
+    expect(validateProductionSurfaceFieldInvariant(result)).toEqual({
+      ok: true,
+      errors: [],
+      warnings: []
+    });
+    expect(() => assertProductionSurfaceFieldInvariant(result)).not.toThrow();
+  });
+
+  test("production surface invariant rejects element stress and display mesh sources", () => {
+    const surfaceMesh = {
+      ...solverSurfaceMeshFromModel(createSingleTetModel()),
+      source: "display_geometry"
+    } as CoreSolveResult["surfaceMesh"];
+    const result: Pick<CoreSolveResult, "surfaceMesh" | "fields"> = {
+      surfaceMesh,
+      fields: [
+        {
+          id: "displacement-surface",
+          type: "displacement",
+          location: "node",
+          values: [0, 0.1, 0.2, 0.3],
+          min: 0,
+          max: 0.3,
+          units: "mm",
+          surfaceMeshRef: "solver-surface"
+        },
+        {
+          id: "stress-surface",
+          type: "stress",
+          location: "element",
+          values: [1, 2, 3, 4],
+          min: 1,
+          max: 4,
+          units: "MPa",
+          surfaceMeshRef: "solver-surface"
+        }
+      ]
+    };
+
+    const report = validateProductionSurfaceFieldInvariant(result);
+
+    expect(report.ok).toBe(false);
+    expect(report.errors.map((error) => error.code)).toEqual(
+      expect.arrayContaining([
+        "invalid-surface-mesh-source",
+        "surface-field-location-mismatch"
+      ])
+    );
+    expect(() => assertProductionSurfaceFieldInvariant(result)).toThrow(/solver surface invariant/i);
   });
 
   test("rejects surface mesh fields with non-node location or misaligned vectors and samples", () => {

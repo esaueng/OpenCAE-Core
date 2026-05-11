@@ -135,6 +135,14 @@ export type CoreResultValidationReport = {
   warnings: CoreResultValidationIssue[];
 };
 
+export type ProductionSurfaceFieldInvariantInput = Pick<CoreSolveResult, "surfaceMesh" | "fields">;
+
+export type ProductionSurfaceFieldInvariantOptions = {
+  stressFieldId?: string;
+  displacementFieldId?: string;
+  requireDisplacementVectors?: boolean;
+};
+
 type ResultModel = Pick<OpenCAEModelJson, "nodes" | "elementBlocks" | "coordinateSystem"> & {
   surfaceFacets?: Array<SurfaceFacetJson | { id: number; nodes: ArrayLike<number> }>;
 };
@@ -222,6 +230,11 @@ export function validateCoreResult(result: CoreSolveResult): CoreResultValidatio
   }
 
   if (result.surfaceMesh) validateSurfaceMesh(result.surfaceMesh, errors);
+  if (!result.summary.transient) {
+    errors.push(...validateProductionSurfaceFieldInvariant(result).errors);
+  } else {
+    validateTransientProductionSurfaceFields(result, errors);
+  }
   validateRequiredDiagnostics(result, errors);
 
   return {
@@ -229,6 +242,58 @@ export function validateCoreResult(result: CoreSolveResult): CoreResultValidatio
     errors,
     warnings: []
   };
+}
+
+export function validateProductionSurfaceFieldInvariant(
+  result: ProductionSurfaceFieldInvariantInput,
+  options: ProductionSurfaceFieldInvariantOptions = {}
+): CoreResultValidationReport {
+  const errors: CoreResultValidationIssue[] = [];
+  const stressFieldId = options.stressFieldId ?? "stress-surface";
+  const displacementFieldId = options.displacementFieldId ?? "displacement-surface";
+  const surfaceMesh = result.surfaceMesh;
+
+  if (!surfaceMesh) {
+    errors.push(issue("missing-surface-mesh", "Production Core results must include the solver surface mesh.", "surfaceMesh"));
+  } else {
+    if ((surfaceMesh as { source?: unknown }).source !== "opencae_core_volume_mesh") {
+      errors.push(issue("invalid-surface-mesh-source", "Production rendering must use the solver surface mesh, not display geometry.", "surfaceMesh.source"));
+    }
+    validateSurfaceMesh(surfaceMesh, errors);
+  }
+
+  const stressField = result.fields.find((field) => field.id === stressFieldId);
+  const displacementField = result.fields.find((field) => field.id === displacementFieldId);
+  if (!stressField) {
+    errors.push(issue("missing-required-result-field", `Production Core result field ${stressFieldId} is required.`, "fields"));
+  } else {
+    validateProductionSurfaceField(stressField, "stress", stressFieldId, surfaceMesh, "fields.stress", errors);
+  }
+  if (!displacementField) {
+    errors.push(issue("missing-required-result-field", `Production Core result field ${displacementFieldId} is required.`, "fields"));
+  } else {
+    validateProductionSurfaceField(displacementField, "displacement", displacementFieldId, surfaceMesh, "fields.displacement", errors);
+    if (options.requireDisplacementVectors && displacementField.vectors === undefined) {
+      errors.push(issue("missing-surface-displacement-vectors", "Solver surface displacement fields must include vectors for deformation rendering.", "fields.displacement.vectors"));
+    }
+  }
+
+  return {
+    ok: errors.length === 0,
+    errors,
+    warnings: []
+  };
+}
+
+export function assertProductionSurfaceFieldInvariant(
+  result: ProductionSurfaceFieldInvariantInput,
+  options: ProductionSurfaceFieldInvariantOptions = {}
+): void {
+  const report = validateProductionSurfaceFieldInvariant(result, options);
+  if (!report.ok) {
+    const details = report.errors.map((error) => `${error.code}: ${error.message}`).join("; ");
+    throw new Error(`Production solver surface invariant failed: ${details}`);
+  }
 }
 
 function validateRequiredProductionFields(result: CoreSolveResult, errors: CoreResultValidationIssue[]): void {
@@ -252,6 +317,37 @@ function validateRequiredProductionFields(result: CoreSolveResult, errors: CoreR
   }
 }
 
+function validateTransientProductionSurfaceFields(result: CoreSolveResult, errors: CoreResultValidationIssue[]): void {
+  const surfaceMesh = result.surfaceMesh;
+  const stressFields = result.fields.filter((field) => field.type === "stress" && field.location === "node" && field.surfaceMeshRef === surfaceMesh?.id);
+  for (const stressField of stressFields) {
+    const displacementField = result.fields.find(
+      (field) =>
+        field.type === "displacement" &&
+        field.location === "node" &&
+        field.surfaceMeshRef === surfaceMesh?.id &&
+        field.frameIndex === stressField.frameIndex &&
+        field.timeSeconds === stressField.timeSeconds
+    );
+    if (!displacementField) {
+      errors.push(issue("missing-required-result-field", "Dynamic Core stress fields must have a matching displacement field on the same solver surface frame.", "fields"));
+      continue;
+    }
+    errors.push(
+      ...validateProductionSurfaceFieldInvariant(
+        {
+          surfaceMesh,
+          fields: [stressField, displacementField]
+        },
+        {
+          stressFieldId: stressField.id,
+          displacementFieldId: displacementField.id
+        }
+      ).errors
+    );
+  }
+}
+
 function requireField(
   fields: Map<string, CoreResultField>,
   id: string,
@@ -266,6 +362,38 @@ function requireField(
   }
   if (field.type !== type || field.location !== location) {
     errors.push(issue("required-result-field-shape-mismatch", `Production Core result field ${id} has the wrong type or location.`, `fields.${id}`));
+  }
+}
+
+function validateProductionSurfaceField(
+  field: CoreResultField,
+  expectedType: CoreResultField["type"],
+  expectedId: string,
+  surfaceMesh: SolverSurfaceMesh | undefined,
+  path: string,
+  errors: CoreResultValidationIssue[]
+): void {
+  if (field.id !== expectedId) {
+    errors.push(issue("required-result-field-shape-mismatch", `Production Core result field ${expectedId} has the wrong id.`, `${path}.id`));
+  }
+  if (field.type !== expectedType) {
+    errors.push(issue("required-result-field-shape-mismatch", `Production Core result field ${expectedId} has the wrong type.`, `${path}.type`));
+  }
+  if (field.location !== "node") {
+    errors.push(issue("surface-field-location-mismatch", "Surface mesh fields must be node fields.", `${path}.location`));
+  }
+  if (!surfaceMesh) return;
+  if (field.surfaceMeshRef !== surfaceMesh.id) {
+    errors.push(issue("missing-surface-mesh-reference", "Core result field surfaceMeshRef must reference the solver surface mesh.", `${path}.surfaceMeshRef`));
+  }
+  if (field.values.length !== surfaceMesh.nodes.length) {
+    errors.push(issue("surface-field-length-mismatch", "Solver surface field length does not match surface node count.", `${path}.values`));
+  }
+  if (field.samples !== undefined && field.samples.length !== surfaceMesh.nodes.length) {
+    errors.push(issue("surface-field-sample-length-mismatch", "Surface mesh field samples must align one-to-one with surface nodes.", `${path}.samples`));
+  }
+  if (field.vectors !== undefined && field.vectors.length !== surfaceMesh.nodes.length) {
+    errors.push(issue("surface-field-vector-length-mismatch", "Surface mesh field vectors must align one-to-one with surface nodes.", `${path}.vectors`));
   }
 }
 

@@ -1,6 +1,7 @@
 import {
   assembleNodalLoadVectorWithDiagnostics,
   normalizeModelJson,
+  type BoundaryConditionJson,
   type NormalizedElementBlock,
   type NormalizedOpenCAEModel,
   type NormalizedTet4ElementBlock,
@@ -196,15 +197,14 @@ export function collectConstraints(model: NormalizedOpenCAEModel, boundaryCondit
   const values = new Map<number, number>();
   const activeBoundaryConditions = new Set(boundaryConditionNames);
   const nodeSets = new Map(model.nodeSets.map((nodeSet) => [nodeSet.name, nodeSet.nodes]));
+  const surfaceSets = new Map(model.surfaceSets.map((surfaceSet) => [surfaceSet.name, surfaceSet]));
+  const surfaceFacetById = new Map(model.surfaceFacets.map((facet) => [facet.id, facet]));
 
   for (const boundaryCondition of model.boundaryConditions) {
     if (!activeBoundaryConditions.has(boundaryCondition.name)) {
       continue;
     }
-    const nodes = nodeSets.get(boundaryCondition.nodeSet);
-    if (!nodes) {
-      continue;
-    }
+    const nodes = nodesForBoundaryCondition(boundaryCondition, nodeSets, surfaceSets, surfaceFacetById);
 
     if (boundaryCondition.type === "fixed") {
       for (const component of boundaryCondition.components) {
@@ -226,6 +226,35 @@ export function collectConstraints(model: NormalizedOpenCAEModel, boundaryCondit
   }
 
   return { ok: true, values };
+}
+
+function nodesForBoundaryCondition(
+  boundaryCondition: BoundaryConditionJson,
+  nodeSets: Map<string, Uint32Array>,
+  surfaceSets: Map<string, NormalizedOpenCAEModel["surfaceSets"][number]>,
+  facetById: Map<number, NormalizedOpenCAEModel["surfaceFacets"][number]>
+): number[] {
+  if (boundaryCondition.type === "fixed" && "surfaceSet" in boundaryCondition && boundaryCondition.surfaceSet) {
+    return nodesFromSurfaceSet(surfaceSets.get(boundaryCondition.surfaceSet), facetById);
+  }
+  if ("nodeSet" in boundaryCondition && boundaryCondition.nodeSet) {
+    return Array.from(nodeSets.get(boundaryCondition.nodeSet) ?? []);
+  }
+  return [];
+}
+
+function nodesFromSurfaceSet(
+  surfaceSet: NormalizedOpenCAEModel["surfaceSets"][number] | undefined,
+  facetById: Map<number, NormalizedOpenCAEModel["surfaceFacets"][number]>
+): number[] {
+  const nodes = new Set<number>();
+  if (!surfaceSet) return [];
+  for (const facetId of surfaceSet.facets) {
+    const facet = facetById.get(facetId);
+    if (!facet) continue;
+    for (const node of facet.nodes) nodes.add(node);
+  }
+  return [...nodes];
 }
 
 export function enumerateFreeDofs(dofs: number, constraints: Map<number, number>): Int32Array {
@@ -278,6 +307,8 @@ function solveDenseSystem(
     solverMode: "dense",
     iterations: freeDofs,
     converged: true,
+    matrixRows: dofs,
+    matrixNonZeros: dofs * dofs,
     visualizationSmoothing: options.visualizationSmoothing
   });
 }
@@ -312,6 +343,8 @@ function solveSparseSystem(
     solverMode: "sparse",
     iterations: solve.iterations,
     converged: true,
+    matrixRows: model.counts.nodes * 3,
+    matrixNonZeros: stiffness.values.length,
     visualizationSmoothing: options.visualizationSmoothing
   });
 }
@@ -323,7 +356,7 @@ function finishSolve(
   free: Int32Array,
   freeSolution: Float64Array,
   multiplyFull: (displacement: Float64Array) => Float64Array,
-  diagnostics: Pick<CpuSolverDiagnostics, "solverMode" | "iterations" | "converged" | "visualizationSmoothing">
+  diagnostics: Pick<CpuSolverDiagnostics, "solverMode" | "iterations" | "converged" | "matrixRows" | "matrixNonZeros" | "visualizationSmoothing">
 ): StaticLinearTet4CpuSolveResult {
   const dofs = model.counts.nodes * 3;
   const displacement = new Float64Array(dofs);
@@ -334,14 +367,15 @@ function finishSolve(
   const reactionForce = new Float64Array(dofs);
   for (let i = 0; i < dofs; i += 1) reactionForce[i] = internalForce[i] - loads[i];
 
-  const relativeResidual = computeRelativeResidual(internalForce, loads, free);
+  const residual = computeResidualStats(internalForce, loads, free);
   const recovery = recoverElementResults(model, displacement);
   if (!recovery.ok) {
     return failure(recovery.error.code, recovery.error.message, {
       dofs,
       constrainedDofs: constraints.size,
       freeDofs: free.length,
-      relativeResidual,
+      residualNorm: residual.norm,
+      relativeResidual: residual.relative,
       ...diagnostics
     });
   }
@@ -364,9 +398,11 @@ function finishSolve(
     dofs,
     freeDofs: free.length,
     constrainedDofs: constraints.size,
-    relativeResidual,
+    residualNorm: residual.norm,
+    relativeResidual: residual.relative,
     maxDisplacement: maxNodeVectorNorm(displacement),
     maxVonMisesStress: maxAbs(recovery.vonMises),
+    reactionBalance: computeReactionBalance(loads, reactionForce),
     ...diagnostics
   };
   result.coreResult = staticCoreResultFromSolve(model, result, fullDiagnostics);
@@ -543,11 +579,11 @@ function multiplyDenseMatrixVector(matrix: Float64Array, size: number): (vector:
   };
 }
 
-function computeRelativeResidual(
+function computeResidualStats(
   internalForce: Float64Array,
   externalForce: Float64Array,
   free: Int32Array
-): number {
+): { norm: number; relative: number } {
   let residualNormSquared = 0;
   let referenceNormSquared = 0;
   for (let i = 0; i < free.length; i += 1) {
@@ -557,7 +593,40 @@ function computeRelativeResidual(
   }
   const residualNorm = Math.sqrt(residualNormSquared);
   const reference = Math.sqrt(referenceNormSquared);
-  return reference === 0 && residualNorm === 0 ? 0 : residualNorm / Math.max(reference, 1);
+  return {
+    norm: residualNorm,
+    relative: reference === 0 && residualNorm === 0 ? 0 : residualNorm / Math.max(reference, 1)
+  };
+}
+
+function computeReactionBalance(
+  loads: Float64Array,
+  reactionForce: Float64Array
+): NonNullable<CpuSolverDiagnostics["reactionBalance"]> {
+  const appliedLoad = sumVectorDofs(loads);
+  const reaction = sumVectorDofs(reactionForce);
+  const imbalance: [number, number, number] = [
+    appliedLoad[0] + reaction[0],
+    appliedLoad[1] + reaction[1],
+    appliedLoad[2] + reaction[2]
+  ];
+  const reference = Math.max(Math.hypot(appliedLoad[0], appliedLoad[1], appliedLoad[2]), 1);
+  return {
+    appliedLoad,
+    reaction,
+    imbalance,
+    relativeError: Math.hypot(imbalance[0], imbalance[1], imbalance[2]) / reference
+  };
+}
+
+function sumVectorDofs(values: Float64Array): [number, number, number] {
+  const sum: [number, number, number] = [0, 0, 0];
+  for (let index = 0; index < values.length; index += 3) {
+    sum[0] += values[index];
+    sum[1] += values[index + 1];
+    sum[2] += values[index + 2];
+  }
+  return sum;
 }
 
 export function maxNodeVectorNorm(displacement: Float64Array): number {

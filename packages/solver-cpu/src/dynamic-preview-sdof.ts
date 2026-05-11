@@ -13,7 +13,10 @@ export function solvePreviewSdofTet4Cpu(
   options: DynamicTet4CpuOptions = {}
 ): DynamicTet4CpuSolveResult {
   const staticSolve = solveStaticLinearTet4Cpu(input, { ...options, solverMode: options.solverMode ?? "dense" });
-  if (!staticSolve.ok) return staticSolve;
+  if (!staticSolve.ok) {
+    const { reactionBalance: _reactionBalance, ...diagnostics } = staticSolve.diagnostics ?? {};
+    return { ok: false, error: staticSolve.error, diagnostics };
+  }
 
   const startTime = finiteOr(options.startTime, 0);
   const endTime = finiteOr(options.endTime, 0.1);

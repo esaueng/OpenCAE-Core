@@ -122,6 +122,88 @@ describe("validateModelJson", () => {
     expect(codes).toContain("invalid-prescribed-displacement-value");
   });
 
+  test("accepts fixed boundary conditions that resolve nodes from a surface set", () => {
+    const model = {
+      ...createSingleTetModel(),
+      schemaVersion: "0.2.0",
+      surfaceFacets: [
+        {
+          id: 10,
+          element: 0,
+          elementFace: 3,
+          nodes: [0, 2, 1],
+          area: 0.5,
+          normal: [0, 0, 1],
+          center: [1 / 3, 1 / 3, 0]
+        }
+      ],
+      surfaceSets: [{ name: "fixedFace", facets: [10] }],
+      boundaryConditions: [
+        {
+          name: "fixedSupport",
+          type: "fixed",
+          surfaceSet: "fixedFace",
+          components: ["x", "y", "z"]
+        }
+      ],
+      steps: [
+        {
+          name: "loadStep",
+          type: "staticLinear",
+          boundaryConditions: ["fixedSupport"],
+          loads: ["tipLoad"]
+        }
+      ]
+    };
+
+    expect(validateModelJson(model).ok).toBe(true);
+  });
+
+  test("rejects fixed boundary conditions with both or neither nodeSet and surfaceSet", () => {
+    const model = {
+      ...createSingleTetModel(),
+      schemaVersion: "0.2.0",
+      surfaceFacets: [
+        {
+          id: 10,
+          element: 0,
+          elementFace: 3,
+          nodes: [0, 2, 1],
+          area: 0.5,
+          normal: [0, 0, 1],
+          center: [1 / 3, 1 / 3, 0]
+        }
+      ],
+      surfaceSets: [{ name: "fixedFace", facets: [10] }],
+      boundaryConditions: [
+        {
+          name: "badBoth",
+          type: "fixed",
+          nodeSet: "fixedNodes",
+          surfaceSet: "fixedFace",
+          components: ["x", "y", "z"]
+        },
+        {
+          name: "badNeither",
+          type: "fixed",
+          components: ["x", "y", "z"]
+        },
+        {
+          name: "badMissingSurface",
+          type: "fixed",
+          surfaceSet: "missingFace",
+          components: ["x", "y", "z"]
+        }
+      ]
+    };
+
+    const codes = validateModelJson(model).errors.map((issue) => issue.code);
+
+    expect(codes).toContain("exclusive-boundary-selection");
+    expect(codes).toContain("missing-boundary-selection");
+    expect(codes).toContain("missing-surface-set-reference");
+  });
+
   test("rejects invalid loads", () => {
     const model = createSingleTetModel();
     model.loads = [

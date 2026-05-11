@@ -117,9 +117,17 @@ export type BoundaryConditionJson = FixedBoundaryConditionJson | PrescribedDispl
 export type FixedBoundaryConditionJson = {
   name: string;
   type: "fixed";
-  nodeSet: string;
   components: DisplacementComponent[];
-};
+} & (
+  | {
+      nodeSet: string;
+      surfaceSet?: never;
+    }
+  | {
+      surfaceSet: string;
+      nodeSet?: never;
+    }
+);
 
 export type PrescribedDisplacementBoundaryConditionJson = {
   name: string;

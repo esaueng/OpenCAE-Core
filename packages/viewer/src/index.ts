@@ -1,4 +1,4 @@
-import type { CoreResultField, CoreSolveResult } from "@opencae/core";
+import { assertProductionSurfaceFieldInvariant, type CoreResultField, type CoreSolveResult } from "@opencae/core";
 
 export type SolverSurfaceRenderGeometry = {
   source: "solver_surface_mesh";
@@ -27,6 +27,11 @@ export function buildSolverSurfaceRenderGeometry(
   if (!Array.isArray(surfaceMesh.nodeMap) || surfaceMesh.nodeMap.length !== surfaceMesh.nodes.length) {
     throw new Error("Core result solver surface mesh nodeMap must align one-to-one with surface nodes.");
   }
+  assertProductionSurfaceFieldInvariant(result, {
+    stressFieldId: fieldId,
+    displacementFieldId,
+    requireDisplacementVectors: false
+  });
 
   const field = findSurfaceNodeField(result, fieldId);
   assertSurfaceFieldAlignment(field, surfaceMesh.id, surfaceMesh.nodes.length);

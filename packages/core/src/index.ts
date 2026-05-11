@@ -109,11 +109,15 @@ export type {
   CoreSolveProvenance,
   CoreSolveSummary,
   CoreTransientSummary,
+  ProductionSurfaceFieldInvariantInput,
+  ProductionSurfaceFieldInvariantOptions,
   SolverSurfaceMesh
 } from "./results";
 export {
+  assertProductionSurfaceFieldInvariant,
   createCoreResultField,
   solverSurfaceMeshFromModel,
+  validateProductionSurfaceFieldInvariant,
   validateCoreResult
 } from "./results";
 export { normalizeModelJson } from "./normalize";

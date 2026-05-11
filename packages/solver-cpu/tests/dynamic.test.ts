@@ -66,6 +66,22 @@ describe("solveDynamicLinearTetMDOF", () => {
     expect(validateCoreResult(coreResult!).ok).toBe(true);
   });
 
+  test("applies explicit visualization smoothing metadata to dynamic surface stress fields", () => {
+    const result = solveDynamicLinearTetMDOF(densityModel, {
+      endTime: 0.02,
+      timeStep: 0.005,
+      outputInterval: 0.01,
+      visualizationSmoothing: { iterations: 1, alpha: 0.25 }
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const stressFields = result.result.coreResult?.fields.filter((field) => field.type === "stress" && field.location === "node") ?? [];
+    expect(stressFields.length).toBeGreaterThan(0);
+    expect(stressFields.every((field) => field.visualizationSource === "volume_weighted_nodal_recovery_laplacian_smoothed")).toBe(true);
+    expect(result.diagnostics.visualizationSmoothing).toEqual({ iterations: 1, alpha: 0.25 });
+  });
+
   test("keeps frame field arrays compatible with the static Tet4 result", () => {
     const staticResult = solveStaticLinearTet4Cpu(singleTetStaticFixture);
     const dynamicResult = solveDynamicLinearTetMDOF(densityModel, {

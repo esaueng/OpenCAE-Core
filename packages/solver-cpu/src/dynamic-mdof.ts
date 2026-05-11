@@ -163,6 +163,7 @@ export function solveDynamicMdofTet4Cpu(
     solverMode: "sparse",
     converged: true,
     frameCount: frames.length,
+    visualizationSmoothing: options.visualizationSmoothing,
     startTime: settings.startTime,
     endTime: settings.endTime,
     timeStep: settings.timeStep,

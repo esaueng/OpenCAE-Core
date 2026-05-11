@@ -307,6 +307,63 @@ describe("solveStaticLinearTet4Cpu", () => {
     expect(reaction[2]).toBeCloseTo(50 * area, 8);
   });
 
+  test("resolves fixed supports from surface sets before applying constraints", () => {
+    const model: OpenCAEModelJson = {
+      ...singleTetStaticFixture,
+      schemaVersion: "0.2.0",
+      surfaceFacets: [
+        {
+          id: 1,
+          element: 0,
+          elementFace: 3,
+          nodes: [0, 2, 1],
+          area: 0.5,
+          normal: [0, 0, 1],
+          center: [1 / 3, 1 / 3, 0],
+          sourceFaceId: "fixed-face"
+        }
+      ],
+      surfaceSets: [{ name: "fixedFace", facets: [1] }],
+      boundaryConditions: [
+        {
+          name: "surfaceFixed",
+          type: "fixed",
+          surfaceSet: "fixedFace",
+          components: ["x", "y", "z"]
+        }
+      ],
+      steps: [
+        {
+          name: "loadStep",
+          type: "staticLinear",
+          boundaryConditions: ["surfaceFixed"],
+          loads: ["tipLoad"]
+        }
+      ]
+    };
+
+    const result = solveStaticLinearTet4Cpu(model, { solverMode: "sparse" });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.diagnostics.constrainedDofs).toBe(9);
+    const reaction = sumVectorDofs(result.result.reactionForce);
+    expect(reaction[2]).toBeCloseTo(100, 8);
+  });
+
+  test("reports reaction balance diagnostics for solved static systems", () => {
+    const result = solveStaticLinearTet4Cpu(singleTetStaticFixture, { solverMode: "sparse" });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.diagnostics.matrixRows).toBe(singleTetStaticFixture.nodes.coordinates.length);
+    expect(result.diagnostics.matrixNonZeros).toBeGreaterThan(0);
+    expect(result.diagnostics.residualNorm).toBeGreaterThanOrEqual(0);
+    expect(result.diagnostics.reactionBalance?.appliedLoad).toEqual([0, 0, -100]);
+    expect(result.diagnostics.reactionBalance?.reaction).toEqual([0, 0, 100]);
+    expect(result.diagnostics.reactionBalance?.relativeError).toBeLessThan(1e-8);
+  });
+
   test("solves body gravity loads and balances reactions against mass acceleration", () => {
     const model: OpenCAEModelJson = {
       ...singleTetStaticFixture,

@@ -56,7 +56,7 @@ export function validateModelJson(input: unknown): ValidationReport {
   validateElementSets(input.elementSets, elementValidation.totalElements, errors);
   const surfaceFacetIds = validateSurfaceFacets(input.surfaceFacets, elementValidation.elements, nodeCount, errors);
   const surfaceSetNames = validateSurfaceSets(input.surfaceSets, surfaceFacetIds, errors);
-  const boundaryConditionNames = validateBoundaryConditions(input.boundaryConditions, nodeSetNames, errors);
+  const boundaryConditionNames = validateBoundaryConditions(input.boundaryConditions, nodeSetNames, surfaceSetNames, errors);
   const loadNames = validateLoads(input.loads, nodeSetNames, surfaceSetNames, errors);
   validateSteps(input.steps, boundaryConditionNames, loadNames, errors);
   validateCoordinateSystem(input.coordinateSystem, errors);
@@ -515,6 +515,7 @@ function validateSurfaceSets(
 function validateBoundaryConditions(
   boundaryConditions: unknown,
   nodeSetNames: Set<string>,
+  surfaceSetNames: Set<string>,
   errors: ValidationIssue[]
 ): Set<string> {
   if (!Array.isArray(boundaryConditions)) {
@@ -530,9 +531,9 @@ function validateBoundaryConditions(
       return;
     }
     validateUniqueName(bc.name, names, "boundary-condition", `${path}.name`, errors);
-    validateNodeSetReference(bc.nodeSet, nodeSetNames, `${path}.nodeSet`, errors);
 
     if (bc.type === "fixed") {
+      validateBoundarySelection(bc, nodeSetNames, surfaceSetNames, path, errors);
       if (!Array.isArray(bc.components) || bc.components.length === 0) {
         errors.push(issue("invalid-components", "fixed components must be a non-empty array.", `${path}.components`));
       } else {
@@ -542,6 +543,7 @@ function validateBoundaryConditions(
     }
 
     if (bc.type === "prescribedDisplacement") {
+      validateNodeSetReference(bc.nodeSet, nodeSetNames, `${path}.nodeSet`, errors);
       validateComponent(bc.component, `${path}.component`, errors);
       if (!isFiniteNumber(bc.value)) {
         errors.push(issue("invalid-prescribed-displacement-value", "prescribed displacement value must be finite.", `${path}.value`));
@@ -552,6 +554,30 @@ function validateBoundaryConditions(
     errors.push(issue("invalid-boundary-condition-type", "Boundary condition type must be fixed or prescribedDisplacement.", `${path}.type`));
   });
   return names;
+}
+
+function validateBoundarySelection(
+  bc: Record<string, unknown>,
+  nodeSetNames: Set<string>,
+  surfaceSetNames: Set<string>,
+  path: string,
+  errors: ValidationIssue[]
+): void {
+  const hasNodeSet = bc.nodeSet !== undefined;
+  const hasSurfaceSet = bc.surfaceSet !== undefined;
+  if (hasNodeSet && hasSurfaceSet) {
+    errors.push(issue("exclusive-boundary-selection", "Fixed boundary conditions must reference either nodeSet or surfaceSet, not both.", path));
+    return;
+  }
+  if (!hasNodeSet && !hasSurfaceSet) {
+    errors.push(issue("missing-boundary-selection", "Fixed boundary conditions must reference nodeSet or surfaceSet.", path));
+    return;
+  }
+  if (hasNodeSet) {
+    validateNodeSetReference(bc.nodeSet, nodeSetNames, `${path}.nodeSet`, errors);
+    return;
+  }
+  validateSurfaceSetReference(bc.surfaceSet, surfaceSetNames, `${path}.surfaceSet`, errors);
 }
 
 function validateLoads(
@@ -752,10 +778,19 @@ function countElements(elementBlocks: OpenCAEModelJson["elementBlocks"]): number
 function activeBoundaryNodes(model: OpenCAEModelJson, boundaryConditionNames: string[]): Set<number> {
   const active = new Set(boundaryConditionNames);
   const nodeSets = new Map(model.nodeSets.map((set) => [set.name, set.nodes]));
+  const surfaceSets = new Map((model.surfaceSets ?? []).map((set) => [set.name, set]));
+  const facetById = new Map((model.surfaceFacets ?? extractBoundarySurfaceFacets(model)).map((facet) => [facet.id, facet]));
   const nodes = new Set<number>();
   for (const condition of model.boundaryConditions) {
     if (!active.has(condition.name)) continue;
-    for (const node of nodeSets.get(condition.nodeSet) ?? []) nodes.add(node);
+    if (condition.type === "fixed" && "surfaceSet" in condition && condition.surfaceSet) {
+      const surfaceSet = surfaceSets.get(condition.surfaceSet);
+      for (const facetId of surfaceSet?.facets ?? []) {
+        for (const node of facetById.get(facetId)?.nodes ?? []) nodes.add(node);
+      }
+    } else if ("nodeSet" in condition && condition.nodeSet) {
+      for (const node of nodeSets.get(condition.nodeSet) ?? []) nodes.add(node);
+    }
   }
   return nodes;
 }

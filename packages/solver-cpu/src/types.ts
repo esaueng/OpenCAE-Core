@@ -44,11 +44,20 @@ export type CpuSolverDiagnostics = {
   freeDofs: number;
   constrainedDofs: number;
   relativeResidual: number;
+  residualNorm?: number;
   maxDisplacement: number;
   maxVonMisesStress: number;
   solverMode?: "dense" | "sparse";
   iterations?: number;
   converged?: boolean;
+  matrixRows?: number;
+  matrixNonZeros?: number;
+  reactionBalance?: {
+    appliedLoad: [number, number, number];
+    reaction: [number, number, number];
+    imbalance: [number, number, number];
+    relativeError: number;
+  };
   visualizationSmoothing?: {
     iterations?: number;
     alpha?: number;
@@ -114,7 +123,7 @@ export type PreviewDynamicResult = DynamicTet4CpuResult & {
   provenance: NonNullable<StaticLinearTet4CpuResult["provenance"]>;
 };
 
-export type DynamicTet4CpuDiagnostics = CpuSolverDiagnostics & {
+export type DynamicTet4CpuDiagnostics = Omit<CpuSolverDiagnostics, "reactionBalance"> & {
   frameCount: number;
   startTime: number;
   endTime: number;

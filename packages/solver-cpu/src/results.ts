@@ -1,9 +1,11 @@
 import {
   assembleNodalLoadVectorWithDiagnostics,
+  assertProductionSurfaceFieldInvariant,
   connectedComponents,
   createCoreResultField,
   OPENCAE_CORE_VERSION,
   solverSurfaceMeshFromModel,
+  validateProductionSurfaceFieldInvariant,
   type BoundaryConditionJson,
   type CoreResultField,
   type CoreSolveDiagnostics,
@@ -117,7 +119,7 @@ export function staticCoreResultFromSolve(
       message: "Displacement is exactly zero even though the solved reaction force is nonzero."
     });
   }
-  return {
+  const coreResult: CoreSolveResult = {
     summary: {
       maxStress: displayMaxStress,
       maxStressUnits: "MPa",
@@ -139,6 +141,8 @@ export function staticCoreResultFromSolve(
       rawElementVonMises: Array.from(result.vonMises)
     }
   };
+  assertProductionSurfaceFieldInvariant(coreResult, { requireDisplacementVectors: true });
+  return coreResult;
 }
 
 export function dynamicCoreResultFromSolve(
@@ -161,9 +165,10 @@ export function dynamicCoreResultFromSolve(
     const surfaceVelocity = surfaceVectorMagnitudes(surfaceMesh, frame.velocity.values, displacementScale);
     const surfaceAcceleration = surfaceVectorMagnitudes(surfaceMesh, frame.acceleration.values, displacementScale);
     const recoveredNodalVonMises = recoverNodalVonMisesFromElements(model, frame.vonMises.values);
+    const visualizationStress = visualizationStressValues(model, recoveredNodalVonMises, diagnostics.visualizationSmoothing);
     const surfaceVonMises = surfaceNodeScalars(
       surfaceMesh,
-      recoveredNodalVonMises,
+      visualizationStress.values,
       stressScale
     );
     latestSurfaceVonMises = surfaceVonMises;
@@ -189,7 +194,7 @@ export function dynamicCoreResultFromSolve(
       surfaceMeshRef: surfaceMesh.id,
       frameIndex: frame.frameIndex,
       timeSeconds: frame.timeSeconds,
-      visualizationSource: "volume_weighted_nodal_recovery",
+      visualizationSource: visualizationStress.source,
       engineeringSource: "raw_element_von_mises"
     });
     latestDisplacementSurfaceField = displacementSurfaceField;
@@ -263,7 +268,9 @@ export function dynamicCoreResultFromSolve(
       values: latestSurfaceVonMises,
       units: "MPa",
       surfaceMeshRef: surfaceMesh.id,
-      visualizationSource: "volume_weighted_nodal_recovery",
+      visualizationSource: diagnostics.visualizationSmoothing && (diagnostics.visualizationSmoothing.iterations ?? 0) > 0 && (diagnostics.visualizationSmoothing.alpha ?? 0) > 0
+        ? "volume_weighted_nodal_recovery_laplacian_smoothed"
+        : "volume_weighted_nodal_recovery",
       engineeringSource: "raw_element_von_mises"
     }),
     latestDisplacementSurfaceField ?? createCoreResultField({
@@ -279,7 +286,7 @@ export function dynamicCoreResultFromSolve(
     displayMaxStress
   );
 
-  return {
+  const coreResult: CoreSolveResult = {
     summary: {
       maxStress: displayMaxStress,
       maxStressUnits: "MPa",
@@ -317,6 +324,14 @@ export function dynamicCoreResultFromSolve(
       rawMaxDisplacement
     }
   };
+  if (latestStressSurfaceField && latestDisplacementSurfaceField) {
+    assertProductionSurfaceFieldInvariant(coreResult, {
+      stressFieldId: latestStressSurfaceField.id,
+      displacementFieldId: latestDisplacementSurfaceField.id,
+      requireDisplacementVectors: true
+    });
+  }
+  return coreResult;
 }
 
 function computeSafetyFactor(model: NormalizedOpenCAEModel, vonMises: Float64Array): Float64Array {
@@ -510,7 +525,7 @@ function stressVisualizationDiagnostic(
   surfaceTriangleCount: number;
   stressFieldValueCount: number;
   displacementFieldValueCount: number;
-  fieldSurfaceAlignment: "ok";
+  fieldSurfaceAlignment: "ok" | "invalid";
   fixedNodeCount: number;
   loadNodeCount: number;
   appliedLoadVector: [number, number, number];
@@ -526,6 +541,18 @@ function stressVisualizationDiagnostic(
   const loadSelection = nodeSelectionForLoads(model, activeStep?.loads ?? []);
   const stressByBeamAxisBin = stressBinsByBeamAxis(model, surfaceMesh, stressField.values, 20);
   const warnings = stressVisualizationWarnings(model, stressByBeamAxisBin, fixedSelection, loadSelection);
+  const alignment = validateProductionSurfaceFieldInvariant(
+    {
+      surfaceMesh,
+      fields: [stressField, displacementField]
+    },
+    {
+      stressFieldId: stressField.id,
+      displacementFieldId: displacementField.id
+    }
+  ).ok
+    ? "ok"
+    : "invalid";
   return {
     id: "stress-visualization",
     engineeringStressMaxMpa,
@@ -542,7 +569,7 @@ function stressVisualizationDiagnostic(
     surfaceTriangleCount: surfaceMesh.triangles.length,
     stressFieldValueCount: stressField.values.length,
     displacementFieldValueCount: displacementField.values.length,
-    fieldSurfaceAlignment: "ok",
+    fieldSurfaceAlignment: alignment,
     fixedNodeCount: fixedSelection.count,
     loadNodeCount: loadSelection.count,
     appliedLoadVector: activeStep ? appliedLoadVectorForStep(model, activeStep.loads) : [0, 0, 0],
@@ -615,14 +642,21 @@ function firstStructuralStep(model: NormalizedOpenCAEModel): { boundaryCondition
 
 function nodeSelectionForBoundaryConditions(model: NormalizedOpenCAEModel, boundaryConditionNames: string[]): NodeSelectionSummary {
   const active = new Set(boundaryConditionNames);
-  const nodeSetNames = new Set<string>();
+  const nodeIds = new Set<number>();
+  const facetById = new Map(model.surfaceFacets.map((facet) => [facet.id, facet]));
+  const surfaceSetByName = new Map(model.surfaceSets.map((set) => [set.name, set]));
   for (const boundaryCondition of model.boundaryConditions) {
     if (active.has(boundaryCondition.name) && isFixedBoundaryCondition(boundaryCondition)) {
-      nodeSetNames.add(boundaryCondition.nodeSet);
+      if ("surfaceSet" in boundaryCondition && boundaryCondition.surfaceSet) {
+        const surfaceSet = surfaceSetByName.get(boundaryCondition.surfaceSet);
+        for (const facetId of surfaceSet?.facets ?? []) {
+          for (const node of facetById.get(facetId)?.nodes ?? []) nodeIds.add(node);
+        }
+      } else if ("nodeSet" in boundaryCondition && boundaryCondition.nodeSet) {
+        addNodeSetNodes(model, boundaryCondition.nodeSet, nodeIds);
+      }
     }
   }
-  const nodeIds = new Set<number>();
-  for (const nodeSetName of nodeSetNames) addNodeSetNodes(model, nodeSetName, nodeIds);
   return nodeSelectionSummary(model, nodeIds);
 }
 
