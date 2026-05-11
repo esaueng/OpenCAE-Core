@@ -1,6 +1,6 @@
 {
   "name": "@opencae/core",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Core model, validation, DOF, and numerical utilities for OpenCAE Core.",
   "type": "module",
   "main": "dist/index.js",

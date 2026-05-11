@@ -11,8 +11,8 @@ import {
 } from "@opencae/core";
 import { solveCoreDynamic, solveCoreStatic, type CpuSolverOptions, type DynamicTet4CpuOptions } from "@opencae/solver-cpu";
 
-export const RUNNER_VERSION = "0.1.1";
-export const SOLVER_CPU_VERSION = "0.1.1";
+export const RUNNER_VERSION = "0.1.2";
+export const SOLVER_CPU_VERSION = "0.1.2";
 export const SERVICE_NAME = "opencae-core-cloud";
 
 export type CloudAnalysisType = "static_stress" | "dynamic_structural";

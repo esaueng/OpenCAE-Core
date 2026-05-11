@@ -1,6 +1,6 @@
 {
   "name": "@opencae/examples",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Example fixtures for OpenCAE Core.",
   "type": "module",
   "main": "dist/index.js",

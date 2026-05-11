@@ -19,7 +19,7 @@ import { smoothNodalScalarField } from "./element";
 import { recoverNodalVonMisesFromElements } from "./recovery";
 import type { DynamicTet4CpuResult, DynamicTet4CpuDiagnostics, StaticLinearTet4CpuResult, CpuSolverDiagnostics } from "./types";
 
-export const SOLVER_CPU_VERSION = "0.1.1";
+export const SOLVER_CPU_VERSION = "0.1.2";
 
 export function staticCoreResultFromSolve(
   model: NormalizedOpenCAEModel,

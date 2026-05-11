@@ -36,9 +36,9 @@ describe("OpenCAE Core Cloud runner", () => {
     expect(response.body).toMatchObject({
       ok: true,
       service: "opencae-core-cloud",
-      runnerVersion: "0.1.1",
-      coreVersion: "0.1.1",
-      solverCpuVersion: "0.1.1",
+      runnerVersion: "0.1.2",
+      coreVersion: "0.1.2",
+      solverCpuVersion: "0.1.2",
       supportedAnalysisTypes: ["static_stress", "dynamic_structural"],
       supportedSolvers: ["sparse_static", "mdof_dynamic"],
       supportsActualVolumeMesh: true,

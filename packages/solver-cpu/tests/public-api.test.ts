@@ -46,7 +46,7 @@ describe("public Core solver APIs", () => {
   });
 
   test("exports the solver CPU version from the package entrypoint", () => {
-    expect(SOLVER_CPU_VERSION).toBe("0.1.1");
+    expect(SOLVER_CPU_VERSION).toBe("0.1.2");
   });
 
   test("solveCoreStatic returns a validated CoreSolveResult", () => {

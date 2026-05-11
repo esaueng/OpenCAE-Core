@@ -1,6 +1,6 @@
 {
   "name": "@opencae/core-cloud",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "OpenCAE Core Cloud runner service for static sparse and MDOF dynamic solves.",
   "type": "module",
   "main": "dist/server.js",
