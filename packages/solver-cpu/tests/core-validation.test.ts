@@ -18,6 +18,7 @@ import {
   solveStaticLinearTet,
   solveStaticLinearTet4Cpu
 } from "../src";
+import { hasAbruptStressDiscontinuity } from "../src/results";
 
 const HEX_TETS = [
   0, 1, 3, 4,
@@ -256,7 +257,7 @@ describe("Core validation suite static benchmarks", () => {
     const populatedBins = diagnostic?.stressByBeamAxisBin.filter((bin) => bin.nodeCount > 0) ?? [];
     expect(populatedBins.length).toBeGreaterThan(4);
     expect(populatedBins[0]?.maxStressMpa).toBeGreaterThan((populatedBins.at(-1)?.maxStressMpa ?? 0) * 1.4);
-    expect(diagnostic?.warnings).not.toContain("Stress field has an abrupt spatial discontinuity; verify surface node mapping and load/support selection.");
+    expect(diagnostic?.warnings).not.toContain("Stress field has abrupt spatial discontinuity; verify surface node mapping, load/support mapping, or stress recovery.");
 
     const coreDiagnostic = coreResult?.diagnostics.find(isCoreSolveDiagnostic);
     expect(coreDiagnostic?.displayMaxStressMpa).toBeCloseTo(coreResult?.summary.maxStress ?? 0, 12);
@@ -264,6 +265,27 @@ describe("Core validation suite static benchmarks", () => {
     expect(coreDiagnostic?.rawMaxStressPa).toBeGreaterThan(0);
     expect(coreDiagnostic?.fieldSurfaceAlignment).toBe("ok");
     expect(coreDiagnostic?.solverMethod).toBe("opencae-core-sparse-tet");
+    expect(coreDiagnostic?.warnings).toEqual(diagnostic?.warnings);
+  });
+
+  test("stress discontinuity diagnostic detects synthetic two-zone fields without flagging gradual trends", () => {
+    const gradual = Array.from({ length: 20 }, (_value, bin) => ({
+      bin,
+      axisCenter: bin + 0.5,
+      meanStressMpa: 1 + bin * 0.4,
+      maxStressMpa: 1.2 + bin * 0.4,
+      nodeCount: 4
+    }));
+    const twoZone = Array.from({ length: 20 }, (_value, bin) => ({
+      bin,
+      axisCenter: bin + 0.5,
+      meanStressMpa: bin < 10 ? 2 : 18,
+      maxStressMpa: bin < 10 ? 2.5 : 19,
+      nodeCount: 4
+    }));
+
+    expect(hasAbruptStressDiscontinuity(gradual)).toBe(false);
+    expect(hasAbruptStressDiscontinuity(twoZone)).toBe(true);
   });
 
   test("visualization smoothing is explicit and does not change engineering max stress", () => {
@@ -837,6 +859,7 @@ function isCoreSolveDiagnostic(value: unknown): value is {
   rawMaxStressPa: number;
   fieldSurfaceAlignment: string;
   solverMethod: string;
+  warnings: string[];
 } {
   return (
     typeof value === "object" &&

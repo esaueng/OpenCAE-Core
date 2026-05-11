@@ -102,6 +102,7 @@ export type CoreSolveDiagnostics = {
   fieldSurfaceAlignment: "ok" | "invalid";
   stressFieldValueCount: number;
   displacementFieldValueCount: number;
+  warnings: string[];
   stressByBeamAxisBin: Array<{
     bin: number;
     axisCenter: number;
@@ -555,6 +556,12 @@ function validateField(
 }
 
 function validateSurfaceMesh(surfaceMesh: SolverSurfaceMesh, errors: CoreResultValidationIssue[]): void {
+  if (!Array.isArray(surfaceMesh.nodes) || surfaceMesh.nodes.length === 0) {
+    errors.push(issue("empty-surface-mesh-nodes", "Surface mesh must include at least one node.", "surfaceMesh.nodes"));
+  }
+  if (!Array.isArray(surfaceMesh.triangles) || surfaceMesh.triangles.length === 0) {
+    errors.push(issue("empty-surface-mesh-triangles", "Surface mesh must include at least one triangle.", "surfaceMesh.triangles"));
+  }
   surfaceMesh.nodes.forEach((node, nodeIndex) => {
     for (let component = 0; component < 3; component += 1) {
       if (!Number.isFinite(node[component])) {

@@ -632,6 +632,7 @@ function coreSolveDiagnostics(
     fieldSurfaceAlignment: stressDiagnostic.fieldSurfaceAlignment,
     stressFieldValueCount: stressDiagnostic.stressFieldValueCount,
     displacementFieldValueCount: stressDiagnostic.displacementFieldValueCount,
+    warnings: stressDiagnostic.warnings,
     stressByBeamAxisBin: stressDiagnostic.stressByBeamAxisBin
   };
 }
@@ -765,7 +766,7 @@ function stressVisualizationWarnings(
 ): string[] {
   const warnings: string[] = [];
   if (hasAbruptStressDiscontinuity(bins)) {
-    warnings.push("Stress field has an abrupt spatial discontinuity; verify surface node mapping and load/support selection.");
+    warnings.push("Stress field has abrupt spatial discontinuity; verify surface node mapping, load/support mapping, or stress recovery.");
   }
   if (loadSupportMappingLooksSuspicious(model, fixedSelection, loadSelection)) {
     warnings.push("Load/support mapping does not match expected end-face selection.");
@@ -773,19 +774,36 @@ function stressVisualizationWarnings(
   return warnings;
 }
 
-function hasAbruptStressDiscontinuity(bins: StressBeamAxisBin[]): boolean {
+export function hasAbruptStressDiscontinuity(bins: StressBeamAxisBin[]): boolean {
   const populated = bins.filter((bin) => bin.nodeCount > 0);
-  if (populated.length < 4) return false;
+  if (populated.length < 6) return false;
   const means = populated.map((bin) => bin.meanStressMpa);
   const min = Math.min(...means);
   const max = Math.max(...means);
   const range = max - min;
   if (!Number.isFinite(range) || range <= 1e-9) return false;
   let largestJump = 0;
+  let largestJumpIndex = -1;
+  const jumps: number[] = [];
   for (let index = 1; index < means.length; index += 1) {
-    largestJump = Math.max(largestJump, Math.abs(means[index] - means[index - 1]));
+    const jump = Math.abs(means[index] - means[index - 1]);
+    jumps.push(jump);
+    if (jump > largestJump) {
+      largestJump = jump;
+      largestJumpIndex = index;
+    }
   }
-  return largestJump / range > 0.9;
+  if (largestJump / range < 0.7 || largestJumpIndex <= 0) return false;
+  const sortedJumps = [...jumps].sort((left, right) => right - left);
+  const secondLargestJump = sortedJumps[1] ?? 0;
+  const left = means.slice(0, largestJumpIndex);
+  const right = means.slice(largestJumpIndex);
+  if (left.length < 2 || right.length < 2) return false;
+  const leftSpread = Math.max(...left) - Math.min(...left);
+  const rightSpread = Math.max(...right) - Math.min(...right);
+  const mostlyFlatZones = leftSpread <= range * 0.25 && rightSpread <= range * 0.25;
+  const dominantSingleJump = secondLargestJump <= largestJump * 0.35;
+  return mostlyFlatZones || dominantSingleJump;
 }
 
 function loadSupportMappingLooksSuspicious(

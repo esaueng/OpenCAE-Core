@@ -208,6 +208,94 @@ describe("Core result structures", () => {
     );
   });
 
+  test("rejects empty solver surface meshes before rendering", () => {
+    const result: CoreSolveResult = {
+      summary: {
+        maxStress: 10,
+        maxStressUnits: "MPa",
+        maxDisplacement: 0.1,
+        maxDisplacementUnits: "mm",
+        reactionForce: 5,
+        reactionForceUnits: "N",
+        provenance: {
+          kind: "opencae_core_fea",
+          solver: "opencae-core-sparse-tet",
+          resultSource: "computed",
+          meshSource: "actual_volume_mesh",
+          units: "mm-N-s-MPa"
+        }
+      },
+      fields: [
+        {
+          id: "displacement-surface",
+          type: "displacement",
+          location: "node",
+          values: [0],
+          min: 0,
+          max: 0,
+          units: "mm",
+          surfaceMeshRef: "solver-surface"
+        },
+        {
+          id: "stress-surface",
+          type: "stress",
+          location: "node",
+          values: [1],
+          min: 1,
+          max: 1,
+          units: "MPa",
+          surfaceMeshRef: "solver-surface"
+        },
+        {
+          id: "stress-von-mises-element",
+          type: "stress",
+          location: "element",
+          values: [1],
+          min: 1,
+          max: 1,
+          units: "MPa",
+          meshRef: "solver-volume"
+        }
+      ],
+      surfaceMesh: {
+        id: "solver-surface",
+        nodes: [],
+        triangles: [],
+        coordinateSpace: "solver",
+        source: "opencae_core_volume_mesh",
+        nodeMap: [],
+        volumeNodeCount: 4
+      },
+      diagnostics: [
+        {
+          id: "core-solve-diagnostics",
+          fieldSurfaceAlignment: "ok",
+          surfaceNodeCount: 0,
+          stressFieldValueCount: 0,
+          displacementFieldValueCount: 0
+        }
+      ],
+      provenance: {
+        kind: "opencae_core_fea",
+        solver: "opencae-core-sparse-tet",
+        resultSource: "computed",
+        meshSource: "actual_volume_mesh",
+        units: "mm-N-s-MPa"
+      }
+    };
+
+    const report = validateCoreResult(result);
+
+    expect(report.ok).toBe(false);
+    expect(report.errors.map((error) => error.code)).toEqual(
+      expect.arrayContaining([
+        "empty-surface-mesh-nodes",
+        "empty-surface-mesh-triangles",
+        "surface-field-length-mismatch"
+      ])
+    );
+  });
+
   test("rejects surface mesh fields that do not align one value per surface node", () => {
     const surfaceMesh = solverSurfaceMeshFromModel(createSingleTetModel());
     const result: CoreSolveResult = {
