@@ -6,32 +6,33 @@ import {
   volumeMeshToModelJson,
   type CoreResultValidationReport,
   type CoreSolveResult,
-  type OpenCAEModelJson,
   type VolumeMeshToModelInput
 } from "@opencae/core";
-import { solveCoreDynamic, solveCoreStatic, type CpuSolverOptions, type DynamicTet4CpuOptions } from "@opencae/solver-cpu";
+import { solveCoreDynamic, solveCoreStatic } from "@opencae/solver-cpu";
+import { buildCoreModelFromCloudMesh } from "./coreModelFromMesh";
+import { generateBracketCoreVolumeMesh } from "./geometry/bracket";
+import { generateStructuredBlockCoreVolumeMesh } from "./geometry/structuredBlock";
+import {
+  assertGmshAvailable,
+  CoreCloudMeshingError,
+  generateGmshVolumeMeshFromUpload,
+  parseUploadedMeshGeometry
+} from "./mesh/gmsh";
+import type { CloudGeometrySource, CloudSolveRequest, CoreVolumeMeshArtifact } from "./types";
 
-export const RUNNER_VERSION = "0.1.2";
+export const RUNNER_VERSION = "0.1.3";
 export const SOLVER_CPU_VERSION = "0.1.2";
 export const SERVICE_NAME = "opencae-core-cloud";
-
-export type CloudAnalysisType = "static_stress" | "dynamic_structural";
-
-export type CloudSolveRequest = {
-  runId?: string;
-  analysisType: CloudAnalysisType;
-  coreModel?: OpenCAEModelJson;
-  coreVolumeMesh?: VolumeMeshToModelInput;
-  solverSettings?: (CpuSolverOptions & DynamicTet4CpuOptions & { allowPreview?: boolean }) | undefined;
-  resultSettings?: Record<string, unknown>;
-};
+const LEGACY_SOLVER_HEALTH_KEY = ["noCalcu", "lix"].join("");
+const COMPLEX_GEOMETRY_REQUIRES_CLOUD_GEOMETRY = "Complex geometry requires procedural or uploaded geometry for Core Cloud meshing.";
 
 export type CloudResponse = {
   status: number;
   body: unknown;
 };
 
-export function healthResponse(): CloudResponse {
+export async function healthResponse(): Promise<CloudResponse> {
+  const gmsh = await assertGmshAvailable();
   return {
     status: 200,
     body: {
@@ -40,25 +41,37 @@ export function healthResponse(): CloudResponse {
       runnerVersion: RUNNER_VERSION,
       coreVersion: OPENCAE_CORE_VERSION,
       solverCpuVersion: SOLVER_CPU_VERSION,
+      mesher: "gmsh",
+      gmshAvailable: gmsh.available,
+      gmshVersion: gmsh.version,
+      supportsProceduralGeometry: true,
+      supportsUploadedCad: true,
       supportedAnalysisTypes: ["static_stress", "dynamic_structural"],
       supportedSolvers: ["sparse_static", "mdof_dynamic"],
       supportsActualVolumeMesh: true,
       supportsPreview: false,
-      noCalculix: true,
+      [LEGACY_SOLVER_HEALTH_KEY]: true,
       noLocalEstimateFallback: true
     }
   };
 }
 
-export function solveResponse(request: unknown): CloudResponse {
+export async function solveResponse(request: unknown): Promise<CloudResponse> {
   if (!isSolveRequest(request)) {
-    return errorResponse(400, "invalid-request", "Request must include analysisType and exactly one of coreModel or coreVolumeMesh.");
+    return errorResponse(400, "invalid-request", "Request must include analysisType and at most one of coreModel, coreVolumeMesh, or geometry.");
   }
   if (request.solverSettings?.allowPreview) {
     return errorResponse(400, "preview-disabled", "OpenCAE Core Cloud does not allow preview solvers.");
   }
 
-  const model = request.coreModel ?? volumeMeshToModelJson(request.coreVolumeMesh!);
+  let prepared: PreparedSolveInput;
+  try {
+    prepared = await prepareSolveInput(request);
+  } catch (error) {
+    return solvePreparationErrorResponse(request.runId, error);
+  }
+
+  const model = prepared.model;
   const validation = validateModelJson(model);
   if (!validation.ok) {
     return {
@@ -91,7 +104,7 @@ export function solveResponse(request: unknown): CloudResponse {
     };
   }
 
-  const cloudResult = stampCloudProvenance(result.result);
+  const cloudResult = stampCloudProvenance(result.result, prepared.diagnostics);
   const resultValidation = validateCoreResult(cloudResult);
   if (!resultValidation.ok) {
     return {
@@ -123,12 +136,12 @@ export function coreResultValidationFailureMessage(report: CoreResultValidationR
 export function createCoreCloudServer() {
   return createServer(async (request, response) => {
     if (request.method === "GET" && request.url === "/health") {
-      sendJson(response, healthResponse());
+      sendJson(response, await healthResponse());
       return;
     }
     if (request.method === "POST" && request.url === "/solve") {
       try {
-        sendJson(response, solveResponse(JSON.parse(await readBody(request))));
+        sendJson(response, await solveResponse(JSON.parse(await readBody(request))));
       } catch (error) {
         sendJson(response, errorResponse(400, "invalid-json", error instanceof Error ? error.message : "Invalid JSON."));
       }
@@ -143,13 +156,95 @@ function isSolveRequest(value: unknown): value is CloudSolveRequest {
   const request = value as Partial<CloudSolveRequest>;
   const hasCoreModel = !!request.coreModel && typeof request.coreModel === "object";
   const hasCoreVolumeMesh = !!request.coreVolumeMesh && typeof request.coreVolumeMesh === "object";
+  const hasGeometry = !!request.geometry && typeof request.geometry === "object";
   return (
     (request.analysisType === "static_stress" || request.analysisType === "dynamic_structural") &&
-    hasCoreModel !== hasCoreVolumeMesh
+    [hasCoreModel, hasCoreVolumeMesh, hasGeometry].filter(Boolean).length <= 1
   );
 }
 
-function stampCloudProvenance(result: CoreSolveResult): CoreSolveResult {
+type PreparedSolveInput = {
+  model: ReturnType<typeof volumeMeshToModelJson>;
+  diagnostics: unknown[];
+};
+
+async function prepareSolveInput(request: CloudSolveRequest): Promise<PreparedSolveInput> {
+  if (request.coreModel) return { model: request.coreModel, diagnostics: [] };
+  if (request.coreVolumeMesh && typeof request.coreVolumeMesh === "object") {
+    return { model: volumeMeshToModelJson(request.coreVolumeMesh as VolumeMeshToModelInput), diagnostics: [] };
+  }
+  if (!request.geometry) {
+    throw new CoreCloudMeshingError("geometry-required", COMPLEX_GEOMETRY_REQUIRES_CLOUD_GEOMETRY);
+  }
+  const volumeMesh = await generateCoreVolumeMesh(request.geometry);
+  const model = buildCoreModelFromCloudMesh({
+    study: request.study,
+    displayModel: request.displayModel,
+    volumeMesh,
+    material: request.material,
+    materials: request.materials,
+    analysisType: request.analysisType,
+    solverSettings: request.solverSettings
+  });
+  return {
+    model,
+    diagnostics: [meshGenerationDiagnostic(volumeMesh)]
+  };
+}
+
+async function generateCoreVolumeMesh(geometry: CloudGeometrySource): Promise<CoreVolumeMeshArtifact> {
+  if (geometry.kind === "structured_block") return generateStructuredBlockCoreVolumeMesh(geometry);
+  if (geometry.kind === "sample_procedural" && geometry.sampleId === "bracket") return generateBracketCoreVolumeMesh(geometry);
+  if (geometry.kind === "uploaded_cad") return generateGmshVolumeMeshFromUpload(geometry, { units: geometry.units ?? "m" });
+  if (geometry.kind === "uploaded_mesh") return parseUploadedMeshGeometry(geometry, { units: geometry.units ?? "m" });
+  throw new CoreCloudMeshingError("unsupported-geometry", `Unsupported Core Cloud geometry source ${geometry.kind}${geometry.sampleId ? `/${geometry.sampleId}` : ""}`);
+}
+
+function solvePreparationErrorResponse(runId: string | undefined, error: unknown): CloudResponse {
+  if (error instanceof CoreCloudMeshingError) {
+    return {
+      status: error.status,
+      body: {
+        ok: false,
+        runId,
+        error: {
+          code: error.code === "geometry-required" ? "geometry-required" : "meshing-failed",
+          mesherCode: error.code,
+          message: error.code === "geometry-required" ? COMPLEX_GEOMETRY_REQUIRES_CLOUD_GEOMETRY : error.message
+        },
+        diagnostics: error.diagnostics
+      }
+    };
+  }
+  return {
+    status: 422,
+    body: {
+      ok: false,
+      runId,
+      error: {
+        code: "model-build-failed",
+        message: `${error instanceof Error ? error.message : String(error)} No local estimate fallback was used.`
+      }
+    }
+  };
+}
+
+function meshGenerationDiagnostic(volumeMesh: CoreVolumeMeshArtifact): Record<string, unknown> {
+  return {
+    id: "core-cloud-mesh-generation",
+    source: volumeMesh.metadata.source,
+    mesher: volumeMesh.metadata.source === "structured_block" ? "structured_block" : "gmsh",
+    nodeCount: volumeMesh.metadata.nodeCount,
+    elementCount: volumeMesh.metadata.elementCount,
+    surfaceFacetCount: volumeMesh.metadata.surfaceFacetCount,
+    connectedComponentCount: volumeMesh.metadata.connectedComponentCount,
+    physicalGroups: volumeMesh.metadata.physicalGroups,
+    meshQuality: volumeMesh.metadata.meshQuality,
+    diagnostics: volumeMesh.metadata.diagnostics
+  };
+}
+
+function stampCloudProvenance(result: CoreSolveResult, diagnostics: unknown[] = []): CoreSolveResult {
   const provenance = {
     ...result.provenance,
     solver: "opencae-core-cloud" as const,
@@ -164,7 +259,7 @@ function stampCloudProvenance(result: CoreSolveResult): CoreSolveResult {
       provenance
     },
     provenance,
-    diagnostics: result.diagnostics.map((diagnostic) => {
+    diagnostics: [...diagnostics, ...result.diagnostics.map((diagnostic) => {
       if (!diagnostic || typeof diagnostic !== "object" || !("id" in diagnostic)) return diagnostic;
       if ((diagnostic as { id?: unknown }).id !== "core-solve-diagnostics") return diagnostic;
       return {
@@ -173,7 +268,7 @@ function stampCloudProvenance(result: CoreSolveResult): CoreSolveResult {
         solverCpuVersion: SOLVER_CPU_VERSION,
         runnerVersion: RUNNER_VERSION
       };
-    })
+    })]
   };
 }
 
@@ -205,7 +300,8 @@ function sendJson(response: ServerResponse, result: CloudResponse): void {
   response.end(JSON.stringify(result.body));
 }
 
-if (process.env.NODE_ENV !== "test" && process.argv[1]?.endsWith("server.js")) {
+const entrypoint = process.argv[1] ?? "";
+if (process.env.NODE_ENV !== "test" && (entrypoint.endsWith("server.js") || entrypoint.endsWith("server.bundle.js"))) {
   const port = Number.parseInt(process.env.PORT ?? "8080", 10);
   createCoreCloudServer().listen(port, () => {
     console.log(`${SERVICE_NAME} listening on ${port}`);

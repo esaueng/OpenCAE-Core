@@ -1,6 +1,9 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { describe, expect, test } from "vitest";
 import { singleTetStaticFixture } from "@opencae/examples";
 import { solverSurfaceMeshFromModel, validateCoreResult, type CoreSolveResult, type OpenCAEModelJson } from "@opencae/core";
+import { assertGmshAvailable } from "../src/mesh/gmsh";
 import { coreResultValidationFailureMessage, healthResponse, solveResponse } from "../src/server";
 
 const densityModel = {
@@ -29,16 +32,19 @@ const densityModel = {
 } satisfies OpenCAEModelJson;
 
 describe("OpenCAE Core Cloud runner", () => {
-  test("health reports Core-only production capabilities", () => {
-    const response = healthResponse();
+  test("health reports Core-only production meshing capabilities", async () => {
+    const response = await healthResponse();
 
     expect(response.status).toBe(200);
     expect(response.body).toMatchObject({
       ok: true,
       service: "opencae-core-cloud",
-      runnerVersion: "0.1.2",
+      runnerVersion: "0.1.3",
       coreVersion: "0.1.2",
       solverCpuVersion: "0.1.2",
+      mesher: "gmsh",
+      supportsProceduralGeometry: true,
+      supportsUploadedCad: true,
       supportedAnalysisTypes: ["static_stress", "dynamic_structural"],
       supportedSolvers: ["sparse_static", "mdof_dynamic"],
       supportsActualVolumeMesh: true,
@@ -46,10 +52,11 @@ describe("OpenCAE Core Cloud runner", () => {
       noCalculix: true,
       noLocalEstimateFallback: true
     });
+    expect((response.body as { gmshAvailable?: unknown }).gmshAvailable).toEqual(expect.any(Boolean));
   });
 
-  test("solves static Core models with production provenance", () => {
-    const response = solveResponse({
+  test("solves static Core models with production provenance", async () => {
+    const response = await solveResponse({
       runId: "static-1",
       analysisType: "static_stress",
       coreModel: singleTetStaticFixture
@@ -73,8 +80,8 @@ describe("OpenCAE Core Cloud runner", () => {
     expect(body.provenance.runnerVersion).toBeDefined();
   });
 
-  test("does not synthesize or independently compact surface stress fields", () => {
-    const response = solveResponse({
+  test("does not synthesize or independently compact surface stress fields", async () => {
+    const response = await solveResponse({
       runId: "static-compact",
       analysisType: "static_stress",
       coreModel: singleTetStaticFixture,
@@ -150,8 +157,8 @@ describe("OpenCAE Core Cloud runner", () => {
     expect(coreResultValidationFailureMessage(report)).toBe("Solver surface field length does not match surface mesh node count.");
   });
 
-  test("solves dynamic Core models with MDOF production provenance", () => {
-    const response = solveResponse({
+  test("solves dynamic Core models with MDOF production provenance", async () => {
+    const response = await solveResponse({
       runId: "dynamic-1",
       analysisType: "dynamic_structural",
       coreModel: densityModel
@@ -174,13 +181,13 @@ describe("OpenCAE Core Cloud runner", () => {
     });
   });
 
-  test("rejects invalid models with 422", () => {
+  test("rejects invalid models with 422", async () => {
     const invalid = {
       ...singleTetStaticFixture,
       elementBlocks: [{ ...singleTetStaticFixture.elementBlocks[0], connectivity: [0, 1, 2] }]
     };
 
-    const response = solveResponse({
+    const response = await solveResponse({
       analysisType: "static_stress",
       coreModel: invalid
     });
@@ -188,8 +195,8 @@ describe("OpenCAE Core Cloud runner", () => {
     expect(response.status).toBe(422);
   });
 
-  test("accepts coreVolumeMesh and rejects ambiguous model inputs", () => {
-    const response = solveResponse({
+  test("accepts coreVolumeMesh and rejects ambiguous model inputs", async () => {
+    const response = await solveResponse({
       analysisType: "static_stress",
       coreVolumeMesh: {
         nodes: singleTetStaticFixture.nodes,
@@ -201,7 +208,7 @@ describe("OpenCAE Core Cloud runner", () => {
         steps: singleTetStaticFixture.steps
       }
     });
-    const ambiguous = solveResponse({
+    const ambiguous = await solveResponse({
       analysisType: "static_stress",
       coreModel: singleTetStaticFixture,
       coreVolumeMesh: {
@@ -215,8 +222,8 @@ describe("OpenCAE Core Cloud runner", () => {
     expect(ambiguous.status).toBe(400);
   });
 
-  test("rejects display proxy provenance at the cloud boundary", () => {
-    const response = solveResponse({
+  test("rejects display proxy provenance at the cloud boundary", async () => {
+    const response = await solveResponse({
       analysisType: "static_stress",
       coreModel: {
         ...singleTetStaticFixture,
@@ -233,8 +240,8 @@ describe("OpenCAE Core Cloud runner", () => {
     expect(response.status).toBe(400);
   });
 
-  test("rejects preview requests", () => {
-    const response = solveResponse({
+  test("rejects preview requests", async () => {
+    const response = await solveResponse({
       analysisType: "dynamic_structural",
       coreModel: densityModel,
       solverSettings: { allowPreview: true }
@@ -246,4 +253,142 @@ describe("OpenCAE Core Cloud runner", () => {
       error: { code: "preview-disabled" }
     });
   });
+
+  test("requires procedural or uploaded geometry for complex Core Cloud meshing requests", async () => {
+    const response = await solveResponse({
+      runId: "missing-geometry",
+      analysisType: "static_stress",
+      study: { id: "study-bracket", type: "static_stress" },
+      displayModel: { id: "display-bracket", name: "Bracket Demo", features: ["holes", "gusset"] },
+      solverSettings: {}
+    });
+
+    expect(response.status).toBe(422);
+    expect(response.body).toMatchObject({
+      ok: false,
+      error: {
+        code: "geometry-required",
+        message: "Complex geometry requires procedural or uploaded geometry for Core Cloud meshing."
+      }
+    });
+  });
+
+  test("reports unavailable Gmsh as a meshing error without fallback", async () => {
+    const response = await solveResponse({
+      runId: "bad-upload",
+      analysisType: "static_stress",
+      study: { id: "study-upload", type: "static_stress" },
+      geometry: { kind: "uploaded_cad", format: "step", filename: "missing.step" },
+      solverSettings: {}
+    });
+
+    expect(response.status).toBe(422);
+    expect(response.body).toMatchObject({
+      ok: false,
+      error: { code: "meshing-failed" }
+    });
+    expect(JSON.stringify(response.body)).toContain("No local estimate fallback was used.");
+  });
+
+  test("solves procedural bracket geometry with actual Core mesh when Gmsh is available", async () => {
+    const availability = await assertGmshAvailable();
+    if (!availability.available) return;
+
+    const response = await solveResponse({
+      runId: "bracket-static",
+      analysisType: "static_stress",
+      study: bracketStudy(),
+      geometry: {
+        kind: "sample_procedural",
+        sampleId: "bracket",
+        units: "mm",
+        geometryDescriptor: { meshSize: 24 }
+      },
+      solverSettings: { maxIterations: 20000, tolerance: 1e-8 }
+    });
+
+    expect(response.status).toBe(200);
+    const body = response.body as CoreSolveResult;
+    expect(body.provenance).toMatchObject({
+      kind: "opencae_core_fea",
+      solver: "opencae-core-cloud",
+      meshSource: "actual_volume_mesh",
+      resultSource: "computed"
+    });
+    expect(body.surfaceMesh?.source).toBe("opencae_core_volume_mesh");
+    expect(body.fields.find((field) => field.id === "stress-surface")?.values.length).toBe(body.surfaceMesh?.nodes.length);
+    expect(body.diagnostics.some((diagnostic) => isDiagnostic(diagnostic, "core-cloud-mesh-generation"))).toBe(true);
+  });
+
+  test("solves procedural bracket dynamic geometry with multiple finite frames when Gmsh is available", async () => {
+    const availability = await assertGmshAvailable();
+    if (!availability.available) return;
+
+    const response = await solveResponse({
+      runId: "bracket-dynamic",
+      analysisType: "dynamic_structural",
+      study: {
+        ...bracketStudy(),
+        type: "dynamic_structural",
+        solverSettings: {
+          startTime: 0,
+          endTime: 0.02,
+          timeStep: 0.01,
+          outputInterval: 0.01,
+          dampingRatio: 0.02,
+          loadProfile: "ramp"
+        }
+      },
+      geometry: {
+        kind: "sample_procedural",
+        sampleId: "bracket",
+        units: "mm",
+        geometryDescriptor: { meshSize: 28 }
+      },
+      solverSettings: { maxFrames: 5 }
+    });
+
+    expect(response.status).toBe(200);
+    const fields = (response.body as CoreSolveResult).fields;
+    const displacementFrames = fields.filter((field) => field.type === "displacement");
+    expect(displacementFrames.length).toBeGreaterThan(1);
+    expect(displacementFrames.flatMap((field) => field.values).every(Number.isFinite)).toBe(true);
+  });
+
+  test("Core Cloud source contains no legacy solver or file handoff path", () => {
+    const srcRoot = resolve(__dirname, "../src");
+    const sources = ["server.ts", "coreModelFromMesh.ts", "mesh/gmsh.ts", "geometry/bracket.ts", "geometry/structuredBlock.ts"]
+      .map((file) => readFileSync(resolve(srcRoot, file), "utf8"))
+      .join("\n");
+
+    expect(sources).not.toMatch(/ccx|\.(?:inp|dat|frd)(?:["'`]|\b)/i);
+    expect(sources.toLowerCase()).not.toContain(["calcu", "lix"].join(""));
+  });
 });
+
+function bracketStudy() {
+  return {
+    id: "study-bracket",
+    type: "static_stress",
+    materialAssignments: [{ materialId: "mat-aluminum-6061" }],
+    namedSelections: [
+      {
+        id: "FS1",
+        entityType: "face",
+        geometryRefs: [{ bodyId: "body-bracket", entityType: "face", entityId: "face-base-left", label: "Base mounting holes" }]
+      },
+      {
+        id: "L1",
+        entityType: "face",
+        geometryRefs: [{ bodyId: "body-bracket", entityType: "face", entityId: "face-load-top", label: "Top load face" }]
+      }
+    ],
+    constraints: [{ id: "fixed", type: "fixed", selectionRef: "FS1", parameters: {}, status: "complete" }],
+    loads: [{ id: "load", type: "force", selectionRef: "L1", parameters: { value: 500, units: "N", direction: [0, -1, 0] }, status: "complete" }],
+    solverSettings: {}
+  };
+}
+
+function isDiagnostic(value: unknown, id: string): boolean {
+  return Boolean(value && typeof value === "object" && (value as { id?: unknown }).id === id);
+}

@@ -1,0 +1,24 @@
+$MeshFormat
+2.2 0 8
+$EndMeshFormat
+$PhysicalNames
+4
+2 101 "fixed_support"
+2 102 "load_surface"
+2 103 "hole_surfaces"
+3 201 "solid"
+$EndPhysicalNames
+$Nodes
+4
+10 0 0 0
+20 1 0 0
+30 0 1 0
+40 0 0 1
+$EndNodes
+$Elements
+4
+1 2 2 101 1 20 30 40
+2 2 2 102 1 10 40 30
+3 2 2 103 1 10 20 40
+4 4 2 201 1 10 20 30 40
+$EndElements

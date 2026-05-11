@@ -41,4 +41,34 @@ The consuming app adapter should use these paths:
 - Use structured block meshes only for simple one-body rectangular cantilever/block/beam display models.
 - Reject complex geometry without actual mesh and route to Cloud FEA or mesh generation.
 
+OpenCAE Core Cloud can now accept a geometry source and produce the actual volume mesh inside the container. A complex cloud request should include `study`, `displayModel`, solver/result settings, and one geometry source:
+
+```json
+{
+  "geometry": {
+    "kind": "sample_procedural",
+    "sampleId": "bracket",
+    "units": "mm",
+    "geometryDescriptor": {
+      "baseLength": 120,
+      "baseDepth": 34,
+      "baseHeight": 10,
+      "uprightHeight": 88,
+      "uprightWidth": 18,
+      "holeDiameters": [12, 12, 10],
+      "supportFaceId": "face-base-left",
+      "loadFaceId": "face-load-top"
+    }
+  }
+}
+```
+
+`geometry.kind` may be `sample_procedural`, `uploaded_cad`, `uploaded_mesh`, or `structured_block`. Bracket sample geometry maps `FS1` to `fixed_support` and `L1` to `load_surface`. If a complex request reaches Core Cloud without a procedural or uploaded geometry source, preflight returns:
+
+```text
+Complex geometry requires procedural or uploaded geometry for Core Cloud meshing.
+```
+
+Gmsh is used only as a cloud mesher. The solve still runs through OpenCAE Core sparse static or MDOF dynamic APIs. If Gmsh is missing or meshing fails, the service returns an explicit meshing error and does not use a local estimate or display-bounds proxy.
+
 For result rendering, downstream viewers should render `result.surfaceMesh.nodes` and `result.surfaceMesh.triangles` directly when a field such as `stress-surface` has a matching `surfaceMeshRef`. Vertex colors should come directly from `stress-surface.values`; nearest-sample interpolation is only a fallback for legacy results without a solver surface mesh.
