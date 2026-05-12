@@ -516,10 +516,136 @@ describe("Core result structures", () => {
     }
   });
 
+  test("rejects dynamic solver-surface velocity and acceleration fields that bypass surface alignment", () => {
+    const surfaceMesh = solverSurfaceMeshFromModel(createSingleTetModel());
+    const result: CoreSolveResult = {
+      summary: {
+        maxStress: 10,
+        maxStressUnits: "MPa",
+        maxDisplacement: 0.1,
+        maxDisplacementUnits: "mm",
+        reactionForce: 5,
+        reactionForceUnits: "N",
+        provenance: {
+          kind: "opencae_core_fea",
+          solver: "opencae-core-mdof-tet",
+          resultSource: "computed",
+          meshSource: "actual_volume_mesh",
+          units: "mm-N-s-MPa"
+        },
+        transient: {
+          analysisType: "dynamic_structural",
+          frameCount: 1,
+          startTime: 0,
+          endTime: 0.1,
+          timeStep: 0.1,
+          outputInterval: 0.1,
+          loadProfile: "half_sine",
+          peakDisplacement: 0.1,
+          peakDisplacementTimeSeconds: 0.1
+        }
+      },
+      fields: [
+        {
+          id: "frame-0-displacement-surface",
+          type: "displacement",
+          location: "node",
+          values: [0, 0.1, 0.2, 0.3],
+          min: 0,
+          max: 0.3,
+          units: "mm",
+          surfaceMeshRef: surfaceMesh.id,
+          frameIndex: 0,
+          timeSeconds: 0
+        },
+        {
+          id: "frame-0-stress-surface",
+          type: "stress",
+          location: "node",
+          values: [1, 2, 3, 4],
+          min: 1,
+          max: 4,
+          units: "MPa",
+          surfaceMeshRef: surfaceMesh.id,
+          frameIndex: 0,
+          timeSeconds: 0
+        },
+        {
+          id: "frame-0-velocity",
+          type: "velocity",
+          location: "node",
+          values: [0, 0, 0, 0],
+          min: 0,
+          max: 0,
+          units: "mm/s",
+          frameIndex: 0,
+          timeSeconds: 0
+        },
+        {
+          id: "frame-0-acceleration",
+          type: "acceleration",
+          location: "node",
+          values: [0, 0],
+          min: 0,
+          max: 0,
+          units: "mm/s^2",
+          surfaceMeshRef: surfaceMesh.id,
+          frameIndex: 0,
+          timeSeconds: 0
+        },
+        {
+          id: "frame-0-stress-von-mises-element",
+          type: "stress",
+          location: "element",
+          values: [4],
+          min: 4,
+          max: 4,
+          units: "MPa",
+          meshRef: "solver-volume",
+          frameIndex: 0,
+          timeSeconds: 0
+        }
+      ],
+      surfaceMesh,
+      diagnostics: [
+        {
+          id: "core-solve-diagnostics",
+          fieldSurfaceAlignment: "ok",
+          surfaceNodeCount: surfaceMesh.nodes.length,
+          stressFieldValueCount: surfaceMesh.nodes.length,
+          displacementFieldValueCount: surfaceMesh.nodes.length
+        }
+      ],
+      provenance: {
+        kind: "opencae_core_fea",
+        solver: "opencae-core-mdof-tet",
+        resultSource: "computed",
+        meshSource: "actual_volume_mesh",
+        units: "mm-N-s-MPa"
+      }
+    };
+
+    const report = validateCoreResult(result);
+
+    expect(report.ok).toBe(false);
+    expect(report.errors.map((error) => error.code)).toEqual(
+      expect.arrayContaining(["missing-surface-mesh-reference", "surface-field-length-mismatch"])
+    );
+  });
+
   test("does not contain modulo fallback surface-node indexing in packages or services", () => {
     const offenders = sourceFiles(resolve(process.cwd(), "../.."))
       .filter((file) => /(?:packages|services)\//.test(file))
       .filter((file) => /nodes\s*\[\s*index\s*%\s*nodes\.length\s*\]/.test(readFileSync(file, "utf8")));
+
+    expect(offenders).toEqual([]);
+  });
+
+  test("does not document nearest-sample or downsampling fallbacks for production solver surface fields", () => {
+    const offenders = sourceFiles(resolve(process.cwd(), "../.."))
+      .filter((file) => /(?:packages|services|docs)\//.test(file))
+      .filter((file) => !file.endsWith("packages/core/tests/results.test.ts"))
+      .filter((file) => /nearest-sample|nearest sample|downsampling fallback|downsample fallback/i.test(readFileSync(file, "utf8")));
 
     expect(offenders).toEqual([]);
   });
@@ -571,7 +697,7 @@ function sourceFiles(root: string): string[] {
     const stat = statSync(path);
     if (stat.isDirectory()) {
       files.push(...sourceFiles(path));
-    } else if (/\.(ts|tsx|js|jsx)$/.test(entry)) {
+    } else if (/\.(ts|tsx|js|jsx|md)$/.test(entry)) {
       files.push(path);
     }
   }

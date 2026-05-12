@@ -386,8 +386,11 @@ function gravityAcceleration(parameters: Record<string, unknown> | undefined): [
   return [direction[0] * STANDARD_GRAVITY, direction[1] * STANDARD_GRAVITY, direction[2] * STANDARD_GRAVITY];
 }
 
-function dynamicLoadProfile(value: unknown): "step" | "ramp" | "quasi_static" | "sinusoidal" {
-  return value === "step" || value === "quasi_static" || value === "sinusoidal" ? value : "ramp";
+function dynamicLoadProfile(value: unknown): "step" | "ramp" | "quasi_static" | "half_sine" {
+  if (value === "step" || value === "ramp" || value === "quasi_static" || value === "half_sine") return value;
+  if (value === "quasiStatic") return "quasi_static";
+  if (value === "sinusoidal") return "half_sine";
+  return "ramp";
 }
 
 function vector3(value: unknown): [number, number, number] | undefined {

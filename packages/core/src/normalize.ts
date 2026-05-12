@@ -58,7 +58,11 @@ export function normalizeModelJson(input: unknown): ModelNormalizationResult {
     })),
     boundaryConditions: model.boundaryConditions.map((boundaryCondition) => ({ ...boundaryCondition })),
     loads: model.loads.map((load) => ({ ...load })),
-    steps: model.steps.map((step) => ({ ...step })),
+    steps: model.steps.map((step) =>
+      step.type === "dynamicLinear"
+        ? { ...step, loadProfile: canonicalDynamicLoadProfile(step.loadProfile) }
+        : { ...step }
+    ),
     coordinateSystem,
     meshProvenance: model.meshProvenance ? { ...model.meshProvenance } : undefined,
     meshConnections: (model.meshConnections ?? []).map((connection) => ({ ...connection })),
@@ -84,4 +88,8 @@ export function normalizeModelJson(input: unknown): ModelNormalizationResult {
     report,
     model: normalized
   };
+}
+
+function canonicalDynamicLoadProfile(loadProfile: string): "step" | "ramp" | "quasi_static" | "half_sine" {
+  return loadProfile === "sinusoidal" ? "half_sine" : loadProfile as "step" | "ramp" | "quasi_static" | "half_sine";
 }

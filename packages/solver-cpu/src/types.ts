@@ -16,7 +16,7 @@ export type CpuSolverOptions = {
   };
 };
 
-export type DynamicLoadProfile = "step" | "ramp" | "quasiStatic" | "quasi_static" | "sinusoidal";
+export type DynamicLoadProfile = "step" | "ramp" | "quasiStatic" | "quasi_static" | "half_sine" | "sinusoidal";
 
 export type DynamicTet4CpuOptions = CpuSolverOptions & {
   startTime?: number;
@@ -134,7 +134,7 @@ export type DynamicTet4CpuDiagnostics = Omit<CpuSolverDiagnostics, "reactionBala
   rayleighBeta: number;
   newmarkGamma: 0.5;
   newmarkBeta: 0.25;
-  loadProfile: DynamicLoadProfile;
+  loadProfile: Exclude<DynamicLoadProfile, "quasiStatic" | "sinusoidal">;
   equivalentMass: number;
   equivalentStiffness: number;
   peakDisplacement: number;

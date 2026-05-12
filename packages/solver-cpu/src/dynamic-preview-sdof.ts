@@ -22,7 +22,7 @@ export function solvePreviewSdofTet4Cpu(
   const endTime = finiteOr(options.endTime, 0.1);
   const timeStep = Math.max(finiteOr(options.timeStep, 0.005), 1e-6);
   const outputInterval = Math.max(finiteOr(options.outputInterval, 0.005), timeStep);
-  const loadProfile = options.loadProfile ?? "ramp";
+  const loadProfile = canonicalDynamicLoadProfile(options.loadProfile ?? "ramp");
   if (endTime <= startTime) {
     return { ok: false, error: { code: "invalid-time-range", message: "Dynamic solve endTime must be greater than startTime." } };
   }
@@ -123,9 +123,16 @@ function outputTimes(startTime: number, endTime: number, outputInterval: number)
 function loadScaleAt(time: number, startTime: number, endTime: number, loadProfile: DynamicLoadProfile): number {
   const s = Math.max(0, Math.min(1, (time - startTime) / Math.max(endTime - startTime, 1e-12)));
   if (loadProfile === "ramp") return s;
-  if (loadProfile === "quasi_static" || loadProfile === "quasiStatic") return 3 * s * s - 2 * s * s * s;
-  if (loadProfile === "sinusoidal") return Math.sin(Math.PI * s);
+  if (loadProfile === "quasi_static") return 3 * s * s - 2 * s * s * s;
+  if (loadProfile === "half_sine") return Math.sin(Math.PI * s);
   return 1;
+}
+
+function canonicalDynamicLoadProfile(value: unknown): Exclude<DynamicLoadProfile, "quasiStatic" | "sinusoidal"> {
+  if (value === "step" || value === "ramp" || value === "quasi_static" || value === "half_sine") return value;
+  if (value === "quasiStatic") return "quasi_static";
+  if (value === "sinusoidal") return "half_sine";
+  return "ramp";
 }
 
 function field(values: Float64Array, frameIndex: number, timeSeconds: number): DynamicResultField {

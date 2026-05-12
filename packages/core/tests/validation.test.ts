@@ -342,6 +342,28 @@ describe("validateModelJson", () => {
     expect(report.ok).toBe(true);
   });
 
+  test("accepts canonical half_sine dynamic load profiles", () => {
+    const model = createSingleTetModel();
+    model.materials = [{ ...model.materials[0], density: 7850 }];
+    model.steps = [
+      {
+        name: "transient",
+        type: "dynamicLinear",
+        boundaryConditions: ["fixedSupport"],
+        loads: ["tipLoad"],
+        startTime: 0,
+        endTime: 0.1,
+        timeStep: 0.01,
+        outputInterval: 0.02,
+        loadProfile: "half_sine"
+      }
+    ];
+
+    const report = validateModelJson(model);
+
+    expect(report.ok).toBe(true);
+  });
+
   test("rejects empty node and surface sets", () => {
     const model = {
       ...createSingleTetModel(),

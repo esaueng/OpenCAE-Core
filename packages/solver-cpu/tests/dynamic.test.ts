@@ -109,7 +109,7 @@ describe("solveDynamicLinearTetMDOF", () => {
   });
 
   test("starts ramp, quasi-static, and half-sine profiles near zero", () => {
-    for (const loadProfile of ["ramp", "quasi_static", "sinusoidal"] as const) {
+    for (const loadProfile of ["ramp", "quasi_static", "half_sine"] as const) {
       const result = solveDynamicLinearTetMDOF(densityModel, {
         endTime: 0.04,
         timeStep: 0.005,
@@ -119,14 +119,32 @@ describe("solveDynamicLinearTetMDOF", () => {
 
       expect(result.ok).toBe(true);
       if (!result.ok) continue;
+      expect(result.diagnostics.loadProfile).toBe(loadProfile);
+      expect(result.result.coreResult?.summary.transient?.loadProfile).toBe(loadProfile);
       expect(maxAbs(result.result.frames[0].displacement.values)).toBeLessThan(1e-14);
-      if (loadProfile === "sinusoidal") {
+      if (loadProfile === "half_sine") {
         expect(result.result.frames[0].loadScale).toBeCloseTo(0);
         expect(result.result.frames.at(-1)?.loadScale ?? -1).toBeCloseTo(0);
       } else {
         expect(maxAbs(result.result.frames.at(-1)?.displacement.values ?? new Float64Array())).toBeGreaterThan(0);
       }
     }
+  });
+
+  test("accepts sinusoidal as a compatibility alias but reports canonical half_sine", () => {
+    const result = solveDynamicLinearTetMDOF(densityModel, {
+      endTime: 0.04,
+      timeStep: 0.005,
+      outputInterval: 0.02,
+      loadProfile: "sinusoidal"
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.diagnostics.loadProfile).toBe("half_sine");
+    expect(result.result.coreResult?.summary.transient?.loadProfile).toBe("half_sine");
+    expect(result.result.frames[0].loadScale).toBeCloseTo(0);
+    expect(result.result.frames.at(-1)?.loadScale ?? -1).toBeCloseTo(0);
   });
 
   test("zero load produces zero displacement, velocity, and acceleration", () => {

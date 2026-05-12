@@ -320,6 +320,18 @@ function validateRequiredProductionFields(result: CoreSolveResult, errors: CoreR
 
 function validateTransientProductionSurfaceFields(result: CoreSolveResult, errors: CoreResultValidationIssue[]): void {
   const surfaceMesh = result.surfaceMesh;
+  const surfaceNodeFields = result.fields.filter(
+    (field) =>
+      field.location === "node" &&
+      (field.type === "stress" ||
+        field.type === "displacement" ||
+        field.type === "velocity" ||
+        field.type === "acceleration")
+  );
+  for (const field of surfaceNodeFields) {
+    validateTransientSurfaceNodeField(field, surfaceMesh, errors);
+  }
+
   const stressFields = result.fields.filter((field) => field.type === "stress" && field.location === "node" && field.surfaceMeshRef === surfaceMesh?.id);
   for (const stressField of stressFields) {
     const displacementField = result.fields.find(
@@ -346,6 +358,27 @@ function validateTransientProductionSurfaceFields(result: CoreSolveResult, error
         }
       ).errors
     );
+  }
+}
+
+function validateTransientSurfaceNodeField(
+  field: CoreResultField,
+  surfaceMesh: SolverSurfaceMesh | undefined,
+  errors: CoreResultValidationIssue[]
+): void {
+  const path = `fields.${field.id}`;
+  if (!surfaceMesh) return;
+  if (field.surfaceMeshRef !== surfaceMesh.id) {
+    errors.push(issue("missing-surface-mesh-reference", "Dynamic solver-surface node fields must reference the solver surface mesh.", `${path}.surfaceMeshRef`));
+  }
+  if (field.values.length !== surfaceMesh.nodes.length) {
+    errors.push(issue("surface-field-length-mismatch", "Dynamic solver-surface node field length must match surface node count.", `${path}.values`));
+  }
+  if (field.samples !== undefined && field.samples.length !== surfaceMesh.nodes.length) {
+    errors.push(issue("surface-field-sample-length-mismatch", "Dynamic solver-surface node field samples must align one-to-one with surface nodes.", `${path}.samples`));
+  }
+  if (field.vectors !== undefined && field.vectors.length !== surfaceMesh.nodes.length) {
+    errors.push(issue("surface-field-vector-length-mismatch", "Dynamic solver-surface node field vectors must align one-to-one with surface nodes.", `${path}.vectors`));
   }
 }
 

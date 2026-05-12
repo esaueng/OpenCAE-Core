@@ -178,7 +178,7 @@ export type StaticLinearStepJson = {
   loads: string[];
 };
 
-export type DynamicLoadProfileJson = "step" | "ramp" | "quasi_static" | "sinusoidal";
+export type DynamicLoadProfileJson = "step" | "ramp" | "quasi_static" | "half_sine" | "sinusoidal";
 
 export type DynamicLinearStepJson = {
   name: string;

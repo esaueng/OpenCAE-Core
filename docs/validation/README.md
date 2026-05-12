@@ -71,4 +71,4 @@ Complex geometry requires procedural or uploaded geometry for Core Cloud meshing
 
 Gmsh is used only as a cloud mesher. The solve still runs through OpenCAE Core sparse static or MDOF dynamic APIs. If Gmsh is missing or meshing fails, the service returns an explicit meshing error and does not use a local estimate or display-bounds proxy.
 
-For result rendering, downstream viewers should render `result.surfaceMesh.nodes` and `result.surfaceMesh.triangles` directly when a field such as `stress-surface` has a matching `surfaceMeshRef`. Vertex colors should come directly from `stress-surface.values`; nearest-sample interpolation is only a fallback for legacy results without a solver surface mesh.
+For production result rendering, downstream viewers must render `result.surfaceMesh.nodes` and `result.surfaceMesh.triangles` directly when a field such as `stress-surface` has a matching `surfaceMeshRef`. Vertex colors come directly from `stress-surface.values` in the same surface-node order. Production Core rendering must reject missing solver surface meshes or misaligned field values instead of inventing replacement samples.

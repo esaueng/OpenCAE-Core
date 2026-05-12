@@ -422,7 +422,7 @@ describe("Core validation suite dynamic benchmarks", () => {
   test("ramp starts near zero, step peaks early, and half-sine starts and ends at zero load", () => {
     const ramp = solveDynamicLinearTetMDOF(dynamicLoadedModel("ramp"));
     const step = solveDynamicLinearTetMDOF(dynamicLoadedModel("step"));
-    const sine = solveDynamicLinearTetMDOF(dynamicLoadedModel("sinusoidal"));
+    const sine = solveDynamicLinearTetMDOF(dynamicLoadedModel("half_sine"));
 
     expect(ramp.ok && step.ok && sine.ok).toBe(true);
     if (!ramp.ok || !step.ok || !sine.ok) return;
@@ -601,7 +601,7 @@ function createHexBarModel(options: {
   };
 }
 
-function dynamicLoadedModel(loadProfile: "ramp" | "step" | "sinusoidal"): OpenCAEModelJson {
+function dynamicLoadedModel(loadProfile: "ramp" | "step" | "half_sine"): OpenCAEModelJson {
   const model = createHexBarModel({
     length: 1,
     youngModulus: 1000,

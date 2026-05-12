@@ -37,7 +37,7 @@ type DynamicSettings = {
   dampingRatio: number;
   rayleighAlpha?: number;
   rayleighBeta?: number;
-  loadProfile: DynamicLoadProfile;
+  loadProfile: Exclude<DynamicLoadProfile, "quasiStatic" | "sinusoidal">;
   maxFrames: number;
 };
 
@@ -231,7 +231,7 @@ function dynamicSettings(model: NormalizedOpenCAEModel, options: DynamicTet4CpuO
     dampingRatio: Math.max(finiteOr(options.dampingRatio, dynamicStep?.dampingRatio ?? DEFAULT_DAMPING_RATIO), 0),
     rayleighAlpha: options.rayleighAlpha ?? dynamicStep?.rayleighAlpha,
     rayleighBeta: options.rayleighBeta ?? dynamicStep?.rayleighBeta,
-    loadProfile: isDynamicLoadProfile(profile) ? profile : "ramp",
+    loadProfile: canonicalDynamicLoadProfile(profile),
     maxFrames: Math.max(Math.floor(finiteOr(options.maxFrames, DEFAULT_MAX_FRAMES)), 1)
   };
 }
@@ -495,13 +495,16 @@ function tetCoordinates(coordinates: Float64Array, connectivity: Uint32Array, of
 function loadScaleAt(time: number, settings: DynamicSettings): number {
   const s = clamp((time - settings.startTime) / Math.max(settings.endTime - settings.startTime, settings.timeStep), 0, 1);
   if (settings.loadProfile === "ramp") return s;
-  if (settings.loadProfile === "quasi_static" || settings.loadProfile === "quasiStatic") return 3 * s * s - 2 * s * s * s;
-  if (settings.loadProfile === "sinusoidal") return Math.sin(Math.PI * s);
+  if (settings.loadProfile === "quasi_static") return 3 * s * s - 2 * s * s * s;
+  if (settings.loadProfile === "half_sine") return Math.sin(Math.PI * s);
   return 1;
 }
 
-function isDynamicLoadProfile(value: unknown): value is DynamicLoadProfile {
-  return value === "step" || value === "ramp" || value === "quasiStatic" || value === "quasi_static" || value === "sinusoidal";
+function canonicalDynamicLoadProfile(value: unknown): Exclude<DynamicLoadProfile, "quasiStatic" | "sinusoidal"> {
+  if (value === "step" || value === "ramp" || value === "quasi_static" || value === "half_sine") return value;
+  if (value === "quasiStatic") return "quasi_static";
+  if (value === "sinusoidal") return "half_sine";
+  return "ramp";
 }
 
 function finiteOr(value: unknown, fallback: number): number {

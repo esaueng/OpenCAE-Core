@@ -13,7 +13,7 @@ import { computeTet4SignedVolume, connectedComponents, nodesPerElement } from ".
 
 const COMPONENTS = new Set(["x", "y", "z"]);
 const ELEMENT_TYPES = new Set(["Tet4", "Tet10"]);
-const DYNAMIC_PROFILES = new Set(["step", "ramp", "quasi_static", "sinusoidal"]);
+const DYNAMIC_PROFILES = new Set(["step", "ramp", "quasi_static", "half_sine", "sinusoidal"]);
 
 export function validateModelJson(input: unknown): ValidationReport {
   const errors: ValidationIssue[] = [];
@@ -659,7 +659,7 @@ function validateSteps(
         errors.push(issue("invalid-dynamic-time-range", "Dynamic step endTime must be greater than startTime.", `${path}.endTime`));
       }
       if (typeof step.loadProfile !== "string" || !DYNAMIC_PROFILES.has(step.loadProfile)) {
-        errors.push(issue("invalid-dynamic-load-profile", "Dynamic loadProfile must be step, ramp, quasi_static, or sinusoidal.", `${path}.loadProfile`));
+        errors.push(issue("invalid-dynamic-load-profile", "Dynamic loadProfile must be step, ramp, quasi_static, or half_sine.", `${path}.loadProfile`));
       }
       validateOptionalNonNegative(step.dampingRatio, `${path}.dampingRatio`, "invalid-damping-ratio", errors);
       validateOptionalNonNegative(step.rayleighAlpha, `${path}.rayleighAlpha`, "invalid-rayleigh-alpha", errors);

@@ -97,4 +97,28 @@ describe("normalizeModelJson", () => {
     expect(result.model?.counts.surfaceFacets).toBe(1);
     expect(result.model?.counts.surfaceSets).toBe(1);
   });
+
+  test("normalizes legacy sinusoidal dynamic profile to canonical half_sine", () => {
+    const model = createSingleTetModel();
+    model.materials = [{ ...model.materials[0], density: 7850 }];
+    model.steps = [
+      {
+        name: "transient",
+        type: "dynamicLinear",
+        boundaryConditions: ["fixedSupport"],
+        loads: ["tipLoad"],
+        startTime: 0,
+        endTime: 0.1,
+        timeStep: 0.01,
+        outputInterval: 0.02,
+        loadProfile: "sinusoidal"
+      }
+    ];
+
+    const result = normalizeModelJson(model);
+
+    expect(result.ok).toBe(true);
+    expect(result.model?.steps[0].type).toBe("dynamicLinear");
+    expect(result.model?.steps[0].loadProfile).toBe("half_sine");
+  });
 });

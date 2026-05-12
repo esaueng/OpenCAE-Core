@@ -75,6 +75,52 @@ describe("Core Cloud volume mesh generation", () => {
     expect(model.loads[0]).toMatchObject({ type: "surfaceForce", surfaceSet: "load_surface", totalForce: [0, -500, 0] });
   });
 
+  test("canonicalizes Core Cloud dynamic half_sine load profiles during model conversion", () => {
+    const volumeMesh = parseGmshMeshToCoreVolumeMesh(sampleMsh(), {
+      units: "mm",
+      sourceSelectionRefs: {
+        fixed_support: { sourceSelectionRef: "FS1", sourceFaceId: "face-base-left" },
+        load_surface: { sourceSelectionRef: "L1", sourceFaceId: "face-load-top" }
+      }
+    });
+    const model = buildCoreModelFromCloudMesh({
+      study: {
+        ...aluminumStudy,
+        type: "dynamic_structural",
+        solverSettings: { loadProfile: "sinusoidal" }
+      },
+      volumeMesh,
+      analysisType: "dynamic_structural",
+      solverSettings: {}
+    });
+
+    expect(model.steps[0]).toMatchObject({ type: "dynamicLinear", loadProfile: "half_sine" });
+    expect(validateModelJson(model).ok).toBe(true);
+  });
+
+  test("preserves canonical Core Cloud half_sine load profiles during model conversion", () => {
+    const volumeMesh = parseGmshMeshToCoreVolumeMesh(sampleMsh(), {
+      units: "mm",
+      sourceSelectionRefs: {
+        fixed_support: { sourceSelectionRef: "FS1", sourceFaceId: "face-base-left" },
+        load_surface: { sourceSelectionRef: "L1", sourceFaceId: "face-load-top" }
+      }
+    });
+    const model = buildCoreModelFromCloudMesh({
+      study: {
+        ...aluminumStudy,
+        type: "dynamic_structural",
+        solverSettings: { loadProfile: "half_sine" }
+      },
+      volumeMesh,
+      analysisType: "dynamic_structural",
+      solverSettings: {}
+    });
+
+    expect(model.steps[0]).toMatchObject({ type: "dynamicLinear", loadProfile: "half_sine" });
+    expect(validateModelJson(model).ok).toBe(true);
+  });
+
   test("maps selections by source ref, face id, physical name, and rejects low-confidence matches", () => {
     const volumeMesh = parseGmshMeshToCoreVolumeMesh(sampleMsh(), {
       units: "mm",

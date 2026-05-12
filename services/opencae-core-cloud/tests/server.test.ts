@@ -399,7 +399,7 @@ describe("OpenCAE Core Cloud runner", () => {
           timeStep: 0.01,
           outputInterval: 0.01,
           dampingRatio: 0.02,
-          loadProfile: "ramp"
+          loadProfile: "half_sine"
         }
       },
       geometry: {
@@ -416,6 +416,7 @@ describe("OpenCAE Core Cloud runner", () => {
     const displacementFrames = fields.filter((field) => field.type === "displacement");
     expect(displacementFrames.length).toBeGreaterThan(1);
     expect(displacementFrames.flatMap((field) => field.values).every(Number.isFinite)).toBe(true);
+    expect((response.body as CoreSolveResult).summary.transient?.loadProfile).toBe("half_sine");
   });
 
   test("Core Cloud source contains no legacy solver or file handoff path", () => {

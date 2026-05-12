@@ -96,6 +96,8 @@ Static and dynamic Core results expose surface displacement and recovered nodal 
 
 The plot stress field is built by volume-weighted nodal recovery from connected element von Mises stress, then sampled through `surfaceMesh.nodeMap`. The cloud service must not fabricate surface samples from element stress by index. The `stress-visualization` diagnostic records engineering max stress in MPa, plot min/max stress in MPa, `volume_weighted_nodal_recovery`, surface node/triangle counts, stress/displacement field value counts, field alignment status, fixed/load centroids, and effective lever arm in millimeters.
 
+Production rendering has no replacement sampling path. Missing `surfaceMeshRef`, missing `surfaceMesh.nodeMap`, or field lengths that differ from `surfaceMesh.nodes.length` are invalid Core results and must be rejected by solver, cloud, or viewer boundaries.
+
 ## Bracket Regression Fixture
 
 The validation suite includes a small bracket-like Tet mesh with:
