@@ -1,10 +1,11 @@
+import { Readable } from "node:stream";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, test } from "vitest";
 import { singleTetStaticFixture } from "@opencae/examples";
 import { solverSurfaceMeshFromModel, validateCoreResult, type CoreSolveResult, type OpenCAEModelJson } from "@opencae/core";
 import { assertGmshAvailable } from "../src/mesh/gmsh";
-import { coreResultValidationFailureMessage, healthResponse, solveResponse } from "../src/server";
+import { coreResultValidationFailureMessage, healthResponse, isAuthorizedSolveRequest, readBody, solveResponse } from "../src/server";
 import type { CoreCloudGeometryPayload, CoreCloudSolveRequest } from "../src/types";
 
 const densityModel = {
@@ -279,6 +280,101 @@ describe("OpenCAE Core Cloud runner", () => {
     });
   });
 
+  test("clamps caller supplied static solver resource caps", async () => {
+    const response = await solveResponse({
+      analysisType: "static_stress",
+      coreModel: singleTetStaticFixture,
+      solverSettings: {
+        maxDofs: 1_000_000,
+        maxIterations: 1_000_000,
+        tolerance: 1e-30
+      }
+    });
+
+    expect(response.status).toBe(200);
+    expect((response.body as CoreSolveResult).diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "core-cloud-resource-limits",
+          maxDofs: 30000,
+          maxIterations: 20000,
+          tolerance: 1e-10
+        })
+      ])
+    );
+  });
+
+  test("clamps caller supplied dynamic solver resource caps", async () => {
+    const response = await solveResponse({
+      analysisType: "dynamic_structural",
+      coreModel: densityModel,
+      solverSettings: {
+        maxFrames: 1_000_000,
+        maxIterations: 1_000_000,
+        timeStep: 1e-9,
+        outputInterval: 1e-9,
+        endTime: 100
+      }
+    });
+
+    expect(response.status).toBe(200);
+    expect((response.body as CoreSolveResult).diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "core-cloud-resource-limits",
+          maxFrames: 500,
+          maxIterations: 20000,
+          timeStep: 0.001,
+          outputInterval: 0.001,
+          endTime: 0.498
+        })
+      ])
+    );
+  });
+
+  test("requires authorization for solve requests", () => {
+    const previous = process.env.CORE_CLOUD_API_KEY;
+    process.env.CORE_CLOUD_API_KEY = "test-secret";
+    try {
+      expect(isAuthorizedSolveRequest({})).toBe(false);
+      expect(isAuthorizedSolveRequest({ authorization: "Bearer wrong" })).toBe(false);
+    } finally {
+      restoreEnv("CORE_CLOUD_API_KEY", previous);
+    }
+  });
+
+  test("accepts authorized solve requests", () => {
+    const previous = process.env.CORE_CLOUD_API_KEY;
+    process.env.CORE_CLOUD_API_KEY = "test-secret";
+    try {
+      expect(isAuthorizedSolveRequest({ authorization: "Bearer test-secret" })).toBe(true);
+    } finally {
+      restoreEnv("CORE_CLOUD_API_KEY", previous);
+    }
+  });
+
+  test("fails closed when the solve API key is not configured", () => {
+    const previous = process.env.CORE_CLOUD_API_KEY;
+    delete process.env.CORE_CLOUD_API_KEY;
+    try {
+      expect(isAuthorizedSolveRequest({ authorization: "Bearer anything" })).toBe(false);
+    } finally {
+      restoreEnv("CORE_CLOUD_API_KEY", previous);
+    }
+  });
+
+  test("rejects oversized request bodies before parsing JSON", async () => {
+    const previousLimit = process.env.CORE_CLOUD_MAX_REQUEST_BYTES;
+    process.env.CORE_CLOUD_MAX_REQUEST_BYTES = "64";
+    try {
+      const request = Readable.from([JSON.stringify({ analysisType: "static_stress", padding: "x".repeat(256) })]);
+      request.setEncoding = () => request;
+      await expect(readBody(request)).rejects.toMatchObject({ code: "request-too-large" });
+    } finally {
+      restoreEnv("CORE_CLOUD_MAX_REQUEST_BYTES", previousLimit);
+    }
+  });
+
   test("requires procedural or uploaded geometry for complex Core Cloud meshing requests", async () => {
     const response = await solveResponse({
       runId: "missing-geometry",
@@ -455,4 +551,9 @@ function bracketStudy() {
 
 function isDiagnostic(value: unknown, id: string): boolean {
   return Boolean(value && typeof value === "object" && (value as { id?: unknown }).id === id);
+}
+
+function restoreEnv(name: string, value: string | undefined): void {
+  if (value === undefined) delete process.env[name];
+  else process.env[name] = value;
 }

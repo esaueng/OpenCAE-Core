@@ -24,6 +24,7 @@ type ParseOptions = {
   sourceSelectionRefs?: Record<string, SourceSelectionMetadata>;
   diagnostics?: string[];
   source?: CoreVolumeMeshArtifact["metadata"]["source"];
+  maxUploadBytes?: number;
 };
 
 type RunCommandResult = {
@@ -57,6 +58,16 @@ export class CoreCloudMeshingError extends Error {
     this.diagnostics = options.diagnostics ?? [];
   }
 }
+
+const DEFAULT_MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
+const UPLOAD_EXTENSIONS = new Map<string, string>([
+  ["step", ".step"],
+  ["stp", ".stp"],
+  ["stl", ".stl"],
+  ["obj", ".obj"],
+  ["msh", ".msh"],
+  ["json", ".json"]
+]);
 
 export async function assertGmshAvailable(): Promise<{ available: boolean; version?: string; message?: string }> {
   try {
@@ -118,6 +129,8 @@ export async function generateGmshVolumeMeshFromUpload(
   if (!geometry.contentBase64) {
     throw new CoreCloudMeshingError("missing-upload-content", "Uploaded CAD meshing requires contentBase64");
   }
+  const extension = uploadExtension(geometry);
+  const upload = base64ToBytes(geometry.contentBase64, maxUploadBytes(options));
   const availability = await assertGmshAvailable();
   if (!availability.available) {
     throw new CoreCloudMeshingError("gmsh-unavailable", `Gmsh is unavailable for Core Cloud meshing: ${availability.message ?? "gmsh --version failed"}`, {
@@ -126,11 +139,10 @@ export async function generateGmshVolumeMeshFromUpload(
     });
   }
   const workdir = await mkdtemp(join(tmpdir(), "opencae-core-cloud-upload-"));
-  const extension = uploadExtension(geometry);
   const inputPath = join(workdir, `upload${extension}`);
   const meshPath = join(workdir, `${basename(inputPath, extension)}.msh`);
   try {
-    await writeFile(inputPath, base64ToBytes(geometry.contentBase64));
+    await writeFile(inputPath, upload);
     const result = await runGmsh({ workdir, inputPath, outputPath: meshPath, timeoutMs: 120000 });
     if (!result.ok) {
       throw new CoreCloudMeshingError("gmsh-meshing-failed", `Gmsh uploaded geometry meshing failed: ${result.error}`, {
@@ -160,7 +172,7 @@ export function parseUploadedMeshGeometry(
   if (!geometry.contentBase64) {
     throw new CoreCloudMeshingError("missing-upload-content", "Uploaded mesh parsing requires contentBase64");
   }
-  const text = bytesToText(base64ToBytes(geometry.contentBase64));
+  const text = bytesToText(base64ToBytes(geometry.contentBase64, maxUploadBytes(options)));
   if (geometry.format === "msh" || geometry.filename?.toLowerCase().endsWith(".msh")) {
     return parseGmshMeshToCoreVolumeMesh(text, { ...options, source: "uploaded_mesh" });
   }
@@ -555,13 +567,39 @@ function errorDiagnostics(error: unknown): string[] {
 }
 
 function uploadExtension(geometry: CloudGeometrySource): string {
-  const fromFilename = geometry.filename ? extname(geometry.filename) : "";
-  if (fromFilename) return fromFilename;
-  return geometry.format ? `.${geometry.format}` : ".step";
+  const format = typeof geometry.format === "string" ? geometry.format.toLowerCase() : undefined;
+  const fromFormat = format ? UPLOAD_EXTENSIONS.get(format) : undefined;
+  if (fromFormat) return fromFormat;
+  if (format) throw new CoreCloudMeshingError("unsupported-upload-format", `Unsupported upload format ${format}`);
+
+  const fromFilename = geometry.filename ? extname(geometry.filename).toLowerCase() : "";
+  if (fromFilename && [...UPLOAD_EXTENSIONS.values()].includes(fromFilename)) return fromFilename;
+  if (fromFilename) throw new CoreCloudMeshingError("unsupported-upload-format", `Unsupported upload extension ${fromFilename}`);
+  return ".step";
 }
 
-function base64ToBytes(value: string): Uint8Array {
-  return Uint8Array.from(Buffer.from(value, "base64"));
+function maxUploadBytes(options: ParseOptions): number {
+  return Math.min(positiveInteger(options.maxUploadBytes) ?? DEFAULT_MAX_UPLOAD_BYTES, DEFAULT_MAX_UPLOAD_BYTES);
+}
+
+function positiveInteger(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.floor(value) : undefined;
+}
+
+function base64ToBytes(value: string, maxBytes: number): Uint8Array {
+  const normalizedLength = value.replace(/[\r\n\s]/g, "").length;
+  if (Math.floor((normalizedLength * 3) / 4) > maxBytes) {
+    throw new CoreCloudMeshingError("upload-too-large", `Uploaded geometry exceeds maxUploadBytes ${maxBytes}`, {
+      status: 413
+    });
+  }
+  const bytes = Uint8Array.from(Buffer.from(value, "base64"));
+  if (bytes.byteLength > maxBytes) {
+    throw new CoreCloudMeshingError("upload-too-large", `Uploaded geometry exceeds maxUploadBytes ${maxBytes}`, {
+      status: 413
+    });
+  }
+  return bytes;
 }
 
 function bytesToText(value: Uint8Array): string {

@@ -174,6 +174,30 @@ describe("Core Cloud volume mesh generation", () => {
     await expect(generateCoreVolumeMeshFromGeometry({ kind: "sample_procedural", sampleId: "beam" }, { analysisType: "static_stress" })).rejects.toThrow(/unsupported core cloud geometry/i);
   });
 
+  test("rejects uploaded CAD path traversal through runtime format values", async () => {
+    await expect(generateCoreVolumeMeshFromGeometry(
+      {
+        kind: "uploaded_cad",
+        format: "../../../../app/dist/server.bundle.js" as "step",
+        filename: "upload",
+        contentBase64: Buffer.from("malicious bundle").toString("base64")
+      },
+      { analysisType: "static_stress" }
+    )).rejects.toThrow(/unsupported upload format/i);
+  });
+
+  test("rejects uploaded mesh content above the decoded byte limit", async () => {
+    await expect(generateCoreVolumeMeshFromGeometry(
+      {
+        kind: "uploaded_mesh",
+        format: "msh",
+        filename: "large.msh",
+        contentBase64: Buffer.alloc(1025).toString("base64")
+      },
+      { analysisType: "static_stress", solverSettings: { maxUploadBytes: 1024 } }
+    )).rejects.toThrow(/exceeds maxUploadBytes/i);
+  });
+
   test("runGmsh returns logs for success and phase diagnostics for nonzero exits", async () => {
     const success = await runGmsh({
       command: "/bin/sh",

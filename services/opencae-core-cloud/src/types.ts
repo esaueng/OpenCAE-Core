@@ -20,6 +20,10 @@ export type CloudGeometrySource = {
   geometryDescriptor?: Record<string, unknown>;
 };
 
+export type CoreCloudResourceSettings = {
+  maxUploadBytes?: number;
+};
+
 export type CoreCloudGeometryPayload = CloudGeometrySource;
 
 export type SourceSelectionMetadata = {
@@ -109,7 +113,7 @@ export type CloudSolveRequest = {
   materials?: Array<IsotropicLinearElasticMaterialJson | Record<string, unknown>>;
   coreModel?: OpenCAEModelJson;
   coreVolumeMesh?: unknown;
-  solverSettings?: (CpuSolverOptions & DynamicTet4CpuOptions & { allowPreview?: boolean }) | undefined;
+  solverSettings?: (CpuSolverOptions & DynamicTet4CpuOptions & CoreCloudResourceSettings & { allowPreview?: boolean }) | undefined;
   resultSettings?: Record<string, unknown>;
 };
 

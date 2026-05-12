@@ -2,6 +2,7 @@ declare module "node:http" {
   export type IncomingMessage = {
     method?: string;
     url?: string;
+    headers?: Record<string, unknown>;
     setEncoding(encoding: string): void;
     on(event: "data", callback: (chunk: string) => void): void;
     on(event: "end", callback: () => void): void;
@@ -53,6 +54,7 @@ type Buffer = Uint8Array;
 declare const Buffer: {
   from(value: string, encoding: "base64"): Uint8Array;
   from(value: Uint8Array): { toString(encoding: "utf8"): string };
+  byteLength(value: string, encoding?: "utf8"): number;
 };
 
 declare const process: {

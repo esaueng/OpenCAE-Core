@@ -20,6 +20,16 @@ export const SOLVER_CPU_VERSION = "0.1.2";
 export const SERVICE_NAME = "opencae-core-cloud";
 const LEGACY_SOLVER_HEALTH_KEY = ["noCalcu", "lix"].join("");
 const COMPLEX_GEOMETRY_REQUIRES_CLOUD_GEOMETRY = "Complex geometry requires procedural or uploaded geometry for Core Cloud meshing.";
+const DEFAULT_MAX_REQUEST_BYTES = 25 * 1024 * 1024;
+const SOLVER_LIMITS = {
+  maxDofs: 30000,
+  maxIterations: 20000,
+  tolerance: 1e-10,
+  maxFrames: 500,
+  endTimeSeconds: 1,
+  minTimeStepSeconds: 0.001,
+  minOutputIntervalSeconds: 0.001
+};
 
 export type CloudResponse = {
   status: number;
@@ -90,11 +100,13 @@ export async function solveResponse(request: unknown): Promise<CloudResponse> {
   }
   appendPreparedPhase(prepared, phaseDiagnostic("core_model_validated", "complete", "OpenCAE Core model validated."));
   appendPreparedPhase(prepared, phaseDiagnostic("core_solve_started", "started", "OpenCAE Core solve started."));
+  const solverSettings = boundedSolverSettings(request.analysisType, request.solverSettings, model);
+  prepared.diagnostics.push(resourceLimitsDiagnostic(request.analysisType, solverSettings));
 
   const result =
     request.analysisType === "static_stress"
-      ? solveCoreStatic(model, { ...request.solverSettings, method: "sparse", solverMode: "sparse" })
-      : solveCoreDynamic(model, request.solverSettings);
+      ? solveCoreStatic(model, { ...solverSettings, method: "sparse", solverMode: "sparse" })
+      : solveCoreDynamic(model, solverSettings);
 
   if (!result.ok) {
     appendPreparedPhase(prepared, phaseDiagnostic("core_solve_complete", "failed", result.error.message, {
@@ -168,9 +180,17 @@ export function createCoreCloudServer() {
       return;
     }
     if (request.method === "POST" && request.url === "/solve") {
+      if (!isAuthorizedSolveRequest(request.headers)) {
+        sendJson(response, errorResponse(401, "unauthorized", "A valid bearer token is required for solve requests."));
+        return;
+      }
       try {
         sendJson(response, await solveResponse(JSON.parse(await readBody(request))));
       } catch (error) {
+        if (isRequestTooLarge(error)) {
+          sendJson(response, errorResponse(413, "request-too-large", error.message));
+          return;
+        }
         sendJson(response, errorResponse(400, "invalid-json", error instanceof Error ? error.message : "Invalid JSON."));
       }
       return;
@@ -387,16 +407,108 @@ function errorResponse(status: number, code: string, message: string): CloudResp
   };
 }
 
-function readBody(request: IncomingMessage): Promise<string> {
+export function isAuthorizedSolveRequest(headers: Record<string, unknown> | undefined): boolean {
+  const expected = process.env.CORE_CLOUD_API_KEY;
+  const header = headers?.authorization;
+  return typeof expected === "string" && expected.length > 0 && header === `Bearer ${expected}`;
+}
+
+export function readBody(request: Pick<IncomingMessage, "setEncoding" | "on">): Promise<string> {
   return new Promise((resolve, reject) => {
     let body = "";
+    const maxBytes = maxRequestBytes();
     request.setEncoding("utf8");
     request.on("data", (chunk) => {
       body += chunk;
+      if (Buffer.byteLength(body, "utf8") > maxBytes) {
+        reject(requestTooLargeError(maxBytes));
+      }
     });
     request.on("end", () => resolve(body));
     request.on("error", reject);
   });
+}
+
+function maxRequestBytes(): number {
+  return positiveInteger(process.env.CORE_CLOUD_MAX_REQUEST_BYTES) ?? DEFAULT_MAX_REQUEST_BYTES;
+}
+
+function requestTooLargeError(maxBytes: number): Error & { code: string } {
+  const error = new Error(`Request body exceeds max bytes ${maxBytes}.`) as Error & { code: string };
+  error.code = "request-too-large";
+  return error;
+}
+
+function isRequestTooLarge(error: unknown): error is Error & { code: string } {
+  return Boolean(error && typeof error === "object" && (error as { code?: unknown }).code === "request-too-large" && error instanceof Error);
+}
+
+function boundedSolverSettings(
+  analysisType: CloudSolveRequest["analysisType"],
+  input: CloudSolveRequest["solverSettings"],
+  model: OpenCAEModelJson
+): NonNullable<CloudSolveRequest["solverSettings"]> {
+  const selectedStep = model.steps?.[positiveInteger(input?.stepIndex) ?? 0];
+  const dynamicStep = selectedStep?.type === "dynamicLinear" ? selectedStep : undefined;
+  const settings: NonNullable<CloudSolveRequest["solverSettings"]> = {
+    ...input,
+    maxDofs: Math.min(positiveInteger(input?.maxDofs) ?? SOLVER_LIMITS.maxDofs, SOLVER_LIMITS.maxDofs),
+    maxIterations: Math.min(positiveInteger(input?.maxIterations) ?? SOLVER_LIMITS.maxIterations, SOLVER_LIMITS.maxIterations),
+    tolerance: Math.max(finiteNumber(input?.tolerance) ?? SOLVER_LIMITS.tolerance, SOLVER_LIMITS.tolerance)
+  };
+  if (analysisType === "dynamic_structural") {
+    settings.maxFrames = Math.min(positiveInteger(input?.maxFrames) ?? SOLVER_LIMITS.maxFrames, SOLVER_LIMITS.maxFrames);
+    settings.endTime = Math.min(
+      finiteNumber(input?.endTime) ?? finiteNumber(dynamicStep?.endTime) ?? SOLVER_LIMITS.endTimeSeconds,
+      SOLVER_LIMITS.endTimeSeconds
+    );
+    settings.timeStep = Math.max(
+      finiteNumber(input?.timeStep) ?? finiteNumber(dynamicStep?.timeStep) ?? SOLVER_LIMITS.minTimeStepSeconds,
+      SOLVER_LIMITS.minTimeStepSeconds
+    );
+    settings.outputInterval = Math.max(
+      finiteNumber(input?.outputInterval) ?? finiteNumber(dynamicStep?.outputInterval) ?? settings.timeStep,
+      SOLVER_LIMITS.minOutputIntervalSeconds,
+      settings.timeStep
+    );
+    const startTime = finiteNumber(input?.startTime) ?? finiteNumber(dynamicStep?.startTime) ?? 0;
+    const maxFrameEndTime = startTime + Math.max((settings.maxFrames ?? SOLVER_LIMITS.maxFrames) - 2, 0) * settings.outputInterval;
+    settings.startTime = startTime;
+    settings.endTime = Math.min(settings.endTime, maxFrameEndTime);
+  }
+  return settings;
+}
+
+function resourceLimitsDiagnostic(
+  analysisType: CloudSolveRequest["analysisType"],
+  settings: NonNullable<CloudSolveRequest["solverSettings"]>
+): Record<string, unknown> {
+  return {
+    id: "core-cloud-resource-limits",
+    maxDofs: settings.maxDofs,
+    maxIterations: settings.maxIterations,
+    tolerance: settings.tolerance,
+    ...(analysisType === "dynamic_structural"
+      ? {
+          maxFrames: settings.maxFrames,
+          endTime: settings.endTime,
+          timeStep: settings.timeStep,
+          outputInterval: settings.outputInterval
+        }
+      : {})
+  };
+}
+
+function positiveInteger(value: unknown): number | undefined {
+  if (typeof value === "string" && value.trim() !== "") {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : undefined;
+  }
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.floor(value) : undefined;
+}
+
+function finiteNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
 function sendJson(response: ServerResponse, result: CloudResponse): void {
