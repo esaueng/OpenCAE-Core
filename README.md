@@ -96,6 +96,22 @@ Endpoints:
 - `GET /health`
 - `POST /solve`
 
+### Uptime and Health Checks
+
+Use `GET /health` as the container uptime and readiness check for `opencae-core-cloud`. It returns `200` when the Node service can answer and reports the runner, Core, CPU solver, and Gmsh versions:
+
+```sh
+curl http://localhost:8080/health
+```
+
+When OpenCAE Core Cloud is deployed behind the OpenCAE app proxy, the production smoke-check endpoint is:
+
+```sh
+curl https://cae.esau.app/api/cloud-core/health
+```
+
+The health response is intended for deploy smoke checks and freshness checks. For the direct runner, confirm `service`, `runnerVersion`, `coreVersion`, `solverCpuVersion`, `gmshAvailable`, `supportedAnalysisTypes`, `supportsPreview: false`, `noCalculix: true`, and `noLocalEstimateFallback: true`. For the production proxy, confirm `ok: true`, `coreCloudAvailable: true`, `containerBound: true`, `containerRunnerVersion`, `coreVersion`, `solverCpuVersion`, `supportedAnalysisTypes`, `noCalculix: true`, and `noLocalEstimateFallback: true` before treating a deployment as production-ready.
+
 `/solve` accepts `static_stress` and `dynamic_structural` analysis types. It rejects preview requests, invalid Core models, and display-proxy mesh sources. The cloud runner does not generate input decks, invoke external FEA engines, or fall back to local estimates.
 
 ## Validation Suite
