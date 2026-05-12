@@ -20,6 +20,8 @@ export type CloudGeometrySource = {
   geometryDescriptor?: Record<string, unknown>;
 };
 
+export type CoreCloudGeometryPayload = CloudGeometrySource;
+
 export type SourceSelectionMetadata = {
   sourceSelectionRef?: string;
   sourceFaceId?: string;
@@ -110,3 +112,5 @@ export type CloudSolveRequest = {
   solverSettings?: (CpuSolverOptions & DynamicTet4CpuOptions & { allowPreview?: boolean }) | undefined;
   resultSettings?: Record<string, unknown>;
 };
+
+export type CoreCloudSolveRequest = CloudSolveRequest;

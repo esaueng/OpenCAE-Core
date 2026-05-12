@@ -31,12 +31,25 @@ type RunCommandResult = {
   stderr: string;
 };
 
+export type GmshRunInput = {
+  command?: string;
+  workdir?: string;
+  inputPath?: string;
+  outputPath?: string;
+  args?: string[];
+  timeoutMs?: number;
+};
+
+export type GmshRunResult =
+  | { ok: true; outputPath?: string; log: string; phase: "mesh_generation" }
+  | { ok: false; error: string; log: string; phase: "mesh_generation" };
+
 export class CoreCloudMeshingError extends Error {
   readonly code: string;
   readonly status: number;
-  readonly diagnostics: string[];
+  readonly diagnostics: unknown[];
 
-  constructor(code: string, message: string, options: { status?: number; diagnostics?: string[] } = {}) {
+  constructor(code: string, message: string, options: { status?: number; diagnostics?: unknown[] } = {}) {
     super(`${message.replace(/\.+$/, "")}. No local estimate fallback was used.`);
     this.name = "CoreCloudMeshingError";
     this.code = code;
@@ -72,14 +85,18 @@ export async function generateGmshVolumeMeshFromGeo(
   const meshPath = join(workdir, "mesh.msh");
   try {
     await writeFile(geoPath, geoScript, "utf8");
-    const result = await execFileText("gmsh", [geoPath, "-3", "-format", "msh2", "-o", meshPath], 120000);
+    const result = await runGmsh({ workdir, inputPath: geoPath, outputPath: meshPath, timeoutMs: 120000 });
+    if (!result.ok) {
+      throw new CoreCloudMeshingError("gmsh-meshing-failed", `Gmsh volume meshing failed: ${result.error}`, {
+        diagnostics: [result]
+      });
+    }
     const mesh = await readFile(meshPath, "utf8");
     return parseGmshMeshToCoreVolumeMesh(mesh, {
       ...options,
       diagnostics: [
         `gmsh ${availability.version ?? "unknown"}`,
-        ...compactLines(result.stdout),
-        ...compactLines(result.stderr),
+        ...compactLines(result.log),
         ...(options.diagnostics ?? [])
       ]
     });
@@ -114,11 +131,16 @@ export async function generateGmshVolumeMeshFromUpload(
   const meshPath = join(workdir, `${basename(inputPath, extension)}.msh`);
   try {
     await writeFile(inputPath, base64ToBytes(geometry.contentBase64));
-    const result = await execFileText("gmsh", [inputPath, "-3", "-format", "msh2", "-o", meshPath], 120000);
+    const result = await runGmsh({ workdir, inputPath, outputPath: meshPath, timeoutMs: 120000 });
+    if (!result.ok) {
+      throw new CoreCloudMeshingError("gmsh-meshing-failed", `Gmsh uploaded geometry meshing failed: ${result.error}`, {
+        diagnostics: [result]
+      });
+    }
     const mesh = await readFile(meshPath, "utf8");
     return parseGmshMeshToCoreVolumeMesh(mesh, {
       ...options,
-      diagnostics: [`uploaded ${geometry.filename ?? "geometry"} meshed with gmsh ${availability.version ?? "unknown"}`, ...compactLines(result.stderr)]
+      diagnostics: [`uploaded ${geometry.filename ?? "geometry"} meshed with gmsh ${availability.version ?? "unknown"}`, ...compactLines(result.log)]
     });
   } catch (error) {
     if (error instanceof CoreCloudMeshingError) throw error;
@@ -483,6 +505,39 @@ function execFileText(command: string, args: string[], timeout: number): Promise
       resolve(result);
     });
   });
+}
+
+export async function runGmsh(input: GmshRunInput): Promise<GmshRunResult> {
+  const command = input.command ?? "gmsh";
+  const args = input.args ?? [
+    input.inputPath ?? "",
+    "-3",
+    "-format",
+    "msh2",
+    "-o",
+    input.outputPath ?? ""
+  ];
+  try {
+    const result = await execFileText(command, args, input.timeoutMs ?? 120000);
+    return {
+      ok: true,
+      outputPath: input.outputPath,
+      log: commandLog(result),
+      phase: "mesh_generation"
+    };
+  } catch (error) {
+    const diagnostics = errorDiagnostics(error);
+    return {
+      ok: false,
+      error: diagnostics[0] ?? "gmsh failed",
+      log: diagnostics.join("\n"),
+      phase: "mesh_generation"
+    };
+  }
+}
+
+function commandLog(result: RunCommandResult): string {
+  return [result.stdout, result.stderr].filter(Boolean).join("\n");
 }
 
 function compactLines(value: string): string[] {

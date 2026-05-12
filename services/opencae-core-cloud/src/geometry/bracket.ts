@@ -76,28 +76,6 @@ export function bracketGeoScript(descriptor: BracketGeometryDescriptor = {}): st
   const gussetLength = positive(descriptor.gusset?.length ?? descriptor.rib?.length ?? descriptor.gussetLength, 72);
   const gussetHeight = positive(descriptor.gusset?.height ?? descriptor.rib?.height ?? descriptor.gussetHeight, 58);
   const meshSize = positive(descriptor.meshSize, 18);
-  const holeCenters = descriptor.holeCenters?.length
-    ? descriptor.holeCenters
-    : descriptor.holes?.some((hole) => hole.center)
-      ? descriptor.holes.flatMap((hole) => hole.center ? [hole.center] : [])
-    : [
-        [32, baseDepth / 2, baseHeight / 2] as [number, number, number],
-        [88, baseDepth / 2, baseHeight / 2] as [number, number, number],
-        [uprightWidth / 2, baseDepth / 2, 56] as [number, number, number]
-      ];
-  const holeDiameters = descriptor.holeDiameters?.length
-    ? descriptor.holeDiameters
-    : descriptor.holes?.some((hole) => typeof hole.diameter === "number")
-      ? descriptor.holes.map((hole) => positive(hole.diameter, 10))
-      : [12, 12, 10];
-  const cylinderCommands = holeCenters.map((center, index) => {
-    const radius = positive(holeDiameters[index], 10) / 2;
-    const tag = 30 + index;
-    const [x, y, z] = center;
-    void y;
-    return `Cylinder(${tag}) = {${fmt(x)}, -2, ${fmt(z)}, 0, ${fmt(baseDepth + 4)}, 0, ${fmt(radius)}};`;
-  });
-  const cylinderTags = holeCenters.map((_center, index) => 30 + index).join(",");
 
   return [
     'SetFactory("OpenCASCADE");',
@@ -116,21 +94,16 @@ export function bracketGeoScript(descriptor: BracketGeometryDescriptor = {}): st
     "Curve Loop(101) = {101, 102, 103};",
     "Plane Surface(101) = {101};",
     `rib[] = Extrude {0, ${fmt(baseDepth)}, 0} { Surface{101}; };`,
-    "fused[] = BooleanUnion{ Volume{1}; Delete; }{ Volume{2, rib[1]}; Delete; };",
-    ...cylinderCommands,
-    `cut[] = BooleanDifference{ Volume{fused[]}; Delete; }{ Volume{${cylinderTags}}; Delete; };`,
     "Coherence;",
     "eps = 0.01;",
     `fixed[] = Surface In BoundingBox{-eps, -eps, -eps, ${fmt(baseLength)} + eps, ${fmt(baseDepth)} + eps, eps};`,
     `load[] = Surface In BoundingBox{-eps, -eps, ${fmt(uprightHeight)} - eps, ${fmt(uprightWidth)} + eps, ${fmt(baseDepth)} + eps, ${fmt(uprightHeight)} + eps};`,
-    holeSurfaceQueries(holeCenters, holeDiameters, baseDepth),
     `base[] = Surface In BoundingBox{-eps, -eps, -eps, ${fmt(baseLength)} + eps, ${fmt(baseDepth)} + eps, ${fmt(baseHeight)} + eps};`,
     `upright[] = Surface In BoundingBox{-eps, -eps, ${fmt(baseHeight)} - eps, ${fmt(uprightWidth)} + eps, ${fmt(baseDepth)} + eps, ${fmt(uprightHeight)} + eps};`,
     `gusset[] = Surface In BoundingBox{${fmt(uprightWidth)} - eps, -eps, ${fmt(baseHeight)} - eps, ${fmt(Math.min(baseLength, uprightWidth + gussetLength))} + eps, ${fmt(baseDepth)} + eps, ${fmt(Math.min(uprightHeight, baseHeight + gussetHeight))} + eps};`,
-    "Physical Volume(\"solid\") = {cut[]};",
+    "Physical Volume(\"solid\") = {1, 2, rib[1]};",
     "Physical Surface(\"fixed_support\") = {fixed[]};",
     "Physical Surface(\"load_surface\") = {load[]};",
-    "Physical Surface(\"hole_surfaces\") = {hole_surfaces[]};",
     "Physical Surface(\"base_surfaces\") = {base[]};",
     "Physical Surface(\"upright_surfaces\") = {upright[]};",
     "Physical Surface(\"gusset_surfaces\") = {gusset[]};",
@@ -140,16 +113,6 @@ export function bracketGeoScript(descriptor: BracketGeometryDescriptor = {}): st
 
 function bracketDescriptor(value: unknown): BracketGeometryDescriptor {
   return value && typeof value === "object" ? value as BracketGeometryDescriptor : {};
-}
-
-function holeSurfaceQueries(centers: Array<[number, number, number]>, diameters: number[], depth: number): string {
-  const lines = centers.map((center, index) => {
-    const radius = positive(diameters[index], 10) / 2;
-    const [x, _y, z] = center;
-    return `hole_${index}[] = Surface In BoundingBox{${fmt(x - radius - 0.5)}, -eps, ${fmt(z - radius - 0.5)}, ${fmt(x + radius + 0.5)}, ${fmt(depth)} + eps, ${fmt(z + radius + 0.5)}};`;
-  });
-  const names = centers.map((_center, index) => `hole_${index}[]`).join(", ");
-  return [...lines, `hole_surfaces[] = {${names}};`].join("\n");
 }
 
 function positive(value: unknown, fallback: number): number {

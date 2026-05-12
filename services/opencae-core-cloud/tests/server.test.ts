@@ -5,6 +5,7 @@ import { singleTetStaticFixture } from "@opencae/examples";
 import { solverSurfaceMeshFromModel, validateCoreResult, type CoreSolveResult, type OpenCAEModelJson } from "@opencae/core";
 import { assertGmshAvailable } from "../src/mesh/gmsh";
 import { coreResultValidationFailureMessage, healthResponse, solveResponse } from "../src/server";
+import type { CoreCloudGeometryPayload, CoreCloudSolveRequest } from "../src/types";
 
 const densityModel = {
   ...singleTetStaticFixture,
@@ -45,6 +46,7 @@ describe("OpenCAE Core Cloud runner", () => {
       mesher: "gmsh",
       supportsProceduralGeometry: true,
       supportsUploadedCad: true,
+      supportsGeometryToMesh: true,
       supportedAnalysisTypes: ["static_stress", "dynamic_structural"],
       supportedSolvers: ["sparse_static", "mdof_dynamic"],
       supportsActualVolumeMesh: true,
@@ -222,6 +224,29 @@ describe("OpenCAE Core Cloud runner", () => {
     expect(ambiguous.status).toBe(400);
   });
 
+  test("exports Core Cloud request aliases and rejects ambiguous geometry inputs", async () => {
+    const geometry = {
+      kind: "structured_block",
+      units: "mm",
+      descriptor: { length: 20, width: 10, height: 8 }
+    } satisfies CoreCloudGeometryPayload;
+    const request = {
+      analysisType: "static_stress",
+      geometry
+    } satisfies CoreCloudSolveRequest;
+
+    const response = await solveResponse({
+      ...request,
+      coreModel: singleTetStaticFixture
+    });
+
+    expect(response.status).toBe(400);
+    expect(response.body).toMatchObject({
+      ok: false,
+      error: { code: "invalid-request" }
+    });
+  });
+
   test("rejects display proxy provenance at the cloud boundary", async () => {
     const response = await solveResponse({
       analysisType: "static_stress",
@@ -288,6 +313,44 @@ describe("OpenCAE Core Cloud runner", () => {
       error: { code: "meshing-failed" }
     });
     expect(JSON.stringify(response.body)).toContain("No local estimate fallback was used.");
+  });
+
+  test("returns mesh summary, generated model, and phase diagnostics for generated geometry solves", async () => {
+    const response = await solveResponse({
+      runId: "structured-block-static",
+      analysisType: "static_stress",
+      study: bracketStudy(),
+      geometry: {
+        kind: "structured_block",
+        units: "mm",
+        descriptor: { length: 20, width: 10, height: 8 }
+      },
+      solverSettings: { maxIterations: 10000, tolerance: 1e-8 }
+    });
+
+    expect(response.status).toBe(200);
+    const body = response.body as CoreSolveResult & {
+      artifacts?: {
+        generatedCoreModel?: unknown;
+        meshSummary?: {
+          nodeCount: number;
+          elementCount: number;
+          phaseDiagnostics: Array<{ phase: string }>;
+        };
+      };
+      diagnostics: Array<{ phase?: string; id?: string }>;
+    };
+    expect(body.artifacts?.generatedCoreModel).toBeDefined();
+    expect(body.artifacts?.meshSummary).toMatchObject({
+      nodeCount: 8,
+      elementCount: 6
+    });
+    expect(body.artifacts?.meshSummary?.phaseDiagnostics.map((diagnostic) => diagnostic.phase)).toEqual(
+      expect.arrayContaining(["geometry_received", "mesh_parsed", "core_model_built", "core_model_validated", "core_solve_started", "core_solve_complete", "result_postprocessed"])
+    );
+    expect(body.diagnostics.map((diagnostic) => diagnostic.phase).filter(Boolean)).toEqual(
+      expect.arrayContaining(["geometry_received", "core_model_validated", "core_solve_complete", "result_postprocessed"])
+    );
   });
 
   test("solves procedural bracket geometry with actual Core mesh when Gmsh is available", async () => {

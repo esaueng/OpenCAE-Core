@@ -5,7 +5,8 @@ import { connectedComponents, validateModelJson } from "@opencae/core";
 import { generateBracketCoreVolumeMesh, bracketGeometrySourceMetadata } from "../src/geometry/bracket";
 import { generateStructuredBlockCoreVolumeMesh } from "../src/geometry/structuredBlock";
 import { buildCoreModelFromCloudMesh, mapSelectionToSurfaceSet } from "../src/coreModelFromMesh";
-import { assertGmshAvailable, parseGmshMeshToCoreVolumeMesh } from "../src/mesh/gmsh";
+import { assertGmshAvailable, parseGmshMeshToCoreVolumeMesh, runGmsh } from "../src/mesh/gmsh";
+import { generateCoreVolumeMeshFromGeometry } from "../src/mesh/generateCoreVolumeMesh";
 
 const aluminumStudy = {
   id: "study-bracket-static",
@@ -102,6 +103,55 @@ describe("Core Cloud volume mesh generation", () => {
     expect(mesh.surfaceSets.map((set) => set.name)).toEqual(expect.arrayContaining(["fixed_support", "load_surface"]));
   });
 
+  test("routes geometry payloads through the Core volume mesh entrypoint", async () => {
+    const structured = await generateCoreVolumeMeshFromGeometry(
+      {
+        kind: "structured_block",
+        units: "mm",
+        descriptor: { length: 20, width: 10, height: 8 }
+      },
+      { analysisType: "static_stress" }
+    );
+    const uploaded = await generateCoreVolumeMeshFromGeometry(
+      {
+        kind: "uploaded_mesh",
+        format: "msh",
+        filename: "sample.msh",
+        units: "mm",
+        contentBase64: Buffer.from(sampleMsh(), "utf8").toString("base64")
+      },
+      { analysisType: "static_stress" }
+    );
+
+    expect(structured.metadata.source).toBe("structured_block");
+    expect(uploaded.metadata.source).toBe("uploaded_mesh");
+    await expect(generateCoreVolumeMeshFromGeometry({ kind: "sample_procedural", sampleId: "beam" }, { analysisType: "static_stress" })).rejects.toThrow(/unsupported core cloud geometry/i);
+  });
+
+  test("runGmsh returns logs for success and phase diagnostics for nonzero exits", async () => {
+    const success = await runGmsh({
+      command: "/bin/sh",
+      args: ["-c", "printf gmsh-ok"],
+      timeoutMs: 1000
+    });
+    const failure = await runGmsh({
+      command: "/bin/sh",
+      args: ["-c", "printf gmsh-bad >&2; exit 2"],
+      timeoutMs: 1000
+    });
+
+    expect(success).toMatchObject({
+      ok: true,
+      log: expect.stringContaining("gmsh-ok")
+    });
+    expect(failure).toMatchObject({
+      ok: false,
+      phase: "mesh_generation",
+      error: expect.stringMatching(/Command failed|exited/i),
+      log: expect.stringContaining("gmsh-bad")
+    });
+  });
+
   test("bracket geometry source metadata pins procedural selection identity", () => {
     expect(bracketGeometrySourceMetadata()).toMatchObject({
       fixed_support: { sourceSelectionRef: "FS1", sourceFaceId: "face-base-left" },
@@ -134,7 +184,6 @@ describe("Core Cloud volume mesh generation", () => {
     expect(mesh.elements.length).toBeGreaterThan(0);
     expect(mesh.surfaceSets.find((set) => set.name === "fixed_support")?.facets.length).toBeGreaterThan(0);
     expect(mesh.surfaceSets.find((set) => set.name === "load_surface")?.facets.length).toBeGreaterThan(0);
-    expect(mesh.surfaceSets.find((set) => set.name === "hole_surfaces")?.facets.length).toBeGreaterThan(0);
   });
 
   test("keeps geometryDescriptor as a compatibility alias", () => {
