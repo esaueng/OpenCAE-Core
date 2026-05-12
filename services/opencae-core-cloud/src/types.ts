@@ -9,22 +9,22 @@ import type { CpuSolverOptions, DynamicTet4CpuOptions } from "@opencae/solver-cp
 
 export type CloudAnalysisType = "static_stress" | "dynamic_structural";
 
-export type CloudGeometrySource = {
-  kind: "sample_procedural" | "uploaded_cad" | "uploaded_mesh" | "structured_block";
+export type CoreCloudGeometryPayload = {
+  kind: "structured_block" | "sample_procedural" | "uploaded_cad" | "uploaded_mesh";
   sampleId?: "cantilever" | "beam" | "bracket";
-  format?: "step" | "stl" | "obj" | "msh" | "json";
-  filename?: string;
-  contentBase64?: string;
   units?: "mm" | "m";
   descriptor?: Record<string, unknown>;
+  contentBase64?: string;
+  filename?: string;
+  format?: "step" | "stl" | "obj" | "msh" | "json";
   geometryDescriptor?: Record<string, unknown>;
 };
+
+export type CloudGeometrySource = CoreCloudGeometryPayload;
 
 export type CoreCloudResourceSettings = {
   maxUploadBytes?: number;
 };
-
-export type CoreCloudGeometryPayload = CloudGeometrySource;
 
 export type SourceSelectionMetadata = {
   sourceSelectionRef?: string;
@@ -117,4 +117,27 @@ export type CloudSolveRequest = {
   resultSettings?: Record<string, unknown>;
 };
 
-export type CoreCloudSolveRequest = CloudSolveRequest;
+export type CoreCloudSolveRequest = {
+  runId?: string;
+  analysisType?: CloudAnalysisType;
+  coreModel?: unknown;
+  coreVolumeMesh?: unknown;
+  geometry?: CoreCloudGeometryPayload;
+  study?: {
+    id?: unknown;
+    type?: unknown;
+    materialAssignments?: unknown;
+    constraints?: unknown;
+    loads?: unknown;
+    namedSelections?: unknown;
+    solverSettings?: unknown;
+  };
+  displayModel?: unknown;
+  material?: IsotropicLinearElasticMaterialJson | Record<string, unknown>;
+  materials?: Array<IsotropicLinearElasticMaterialJson | Record<string, unknown>>;
+  solverSettings?: Record<string, unknown>;
+  resultSettings?: {
+    maxFieldValues?: number;
+    maxFrames?: number;
+  };
+};

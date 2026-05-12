@@ -375,7 +375,7 @@ describe("OpenCAE Core Cloud runner", () => {
     }
   });
 
-  test("requires procedural or uploaded geometry for complex Core Cloud meshing requests", async () => {
+  test("requires core model, volume mesh, or geometry for Core Cloud solve requests", async () => {
     const response = await solveResponse({
       runId: "missing-geometry",
       analysisType: "static_stress",
@@ -388,8 +388,8 @@ describe("OpenCAE Core Cloud runner", () => {
     expect(response.body).toMatchObject({
       ok: false,
       error: {
-        code: "geometry-required",
-        message: "Complex geometry requires procedural or uploaded geometry for Core Cloud meshing."
+        code: "missing-core-model-or-geometry",
+        message: "OpenCAE Core Cloud requires coreModel, coreVolumeMesh, or geometry. No local estimate fallback was used."
       }
     });
   });
@@ -406,7 +406,7 @@ describe("OpenCAE Core Cloud runner", () => {
     expect(response.status).toBe(422);
     expect(response.body).toMatchObject({
       ok: false,
-      error: { code: "meshing-failed" }
+      error: { code: "missing-upload-content" }
     });
     expect(JSON.stringify(response.body)).toContain("No local estimate fallback was used.");
   });
@@ -415,7 +415,7 @@ describe("OpenCAE Core Cloud runner", () => {
     const response = await solveResponse({
       runId: "structured-block-static",
       analysisType: "static_stress",
-      study: bracketStudy(),
+      study: cantileverStudy(),
       geometry: {
         kind: "structured_block",
         units: "mm",
@@ -442,10 +442,10 @@ describe("OpenCAE Core Cloud runner", () => {
       elementCount: 6
     });
     expect(body.artifacts?.meshSummary?.phaseDiagnostics.map((diagnostic) => diagnostic.phase)).toEqual(
-      expect.arrayContaining(["geometry_received", "mesh_parsed", "core_model_built", "core_model_validated", "core_solve_started", "core_solve_complete", "result_postprocessed"])
+      expect.arrayContaining(["geometry_to_core_model", "validation", "solve", "postprocess"])
     );
     expect(body.diagnostics.map((diagnostic) => diagnostic.phase).filter(Boolean)).toEqual(
-      expect.arrayContaining(["geometry_received", "core_model_validated", "core_solve_complete", "result_postprocessed"])
+      expect.arrayContaining(["geometry_to_core_model", "validation", "solve", "postprocess"])
     );
   });
 
@@ -541,6 +541,29 @@ function bracketStudy() {
         id: "L1",
         entityType: "face",
         geometryRefs: [{ bodyId: "body-bracket", entityType: "face", entityId: "face-load-top", label: "Top load face" }]
+      }
+    ],
+    constraints: [{ id: "fixed", type: "fixed", selectionRef: "FS1", parameters: {}, status: "complete" }],
+    loads: [{ id: "load", type: "force", selectionRef: "L1", parameters: { value: 500, units: "N", direction: [0, -1, 0] }, status: "complete" }],
+    solverSettings: {}
+  };
+}
+
+function cantileverStudy() {
+  return {
+    id: "study-cantilever",
+    type: "static_stress",
+    materialAssignments: [{ materialId: "mat-aluminum-6061" }],
+    namedSelections: [
+      {
+        id: "FS1",
+        entityType: "face",
+        geometryRefs: [{ entityType: "face", entityId: "x_min", label: "Fixed support" }]
+      },
+      {
+        id: "L1",
+        entityType: "face",
+        geometryRefs: [{ entityType: "face", entityId: "x_max", label: "Load surface" }]
       }
     ],
     constraints: [{ id: "fixed", type: "fixed", selectionRef: "FS1", parameters: {}, status: "complete" }],

@@ -7,13 +7,13 @@ import {
   type CoreResultValidationReport,
   type CoreSolveResult,
   type OpenCAEModelJson,
+  type ValidationIssue,
   type VolumeMeshToModelInput
 } from "@opencae/core";
 import { solveCoreDynamic, solveCoreStatic } from "@opencae/solver-cpu";
-import { buildCoreModelFromCloudMesh } from "./coreModelFromMesh";
-import { generateCoreVolumeMeshFromGeometry } from "./mesh/generateCoreVolumeMesh";
+import { coreModelFromGeometry } from "./coreModelFromGeometry";
 import { assertGmshAvailable, CoreCloudMeshingError } from "./mesh/gmsh";
-import type { CloudSolveRequest, CoreVolumeMeshArtifact } from "./types";
+import type { CloudSolveRequest, CoreCloudSolveRequest, CoreVolumeMeshArtifact } from "./types";
 
 export const RUNNER_VERSION = "0.1.3";
 export const SOLVER_CPU_VERSION = "0.1.2";
@@ -80,7 +80,8 @@ export async function solveResponse(request: unknown): Promise<CloudResponse> {
   const model = prepared.model;
   const validation = validateModelJson(model);
   if (!validation.ok) {
-    appendPreparedPhase(prepared, phaseDiagnostic("core_model_validated", "failed", "OpenCAE Core model validation failed.", {
+    appendPreparedPhase(prepared, phaseDiagnostic("validation", "failed", "OpenCAE Core model validation failed.", {
+      code: "validation-failed",
       errorCount: validation.errors.length
     }));
     return {
@@ -98,8 +99,12 @@ export async function solveResponse(request: unknown): Promise<CloudResponse> {
       }
     };
   }
-  appendPreparedPhase(prepared, phaseDiagnostic("core_model_validated", "complete", "OpenCAE Core model validated."));
-  appendPreparedPhase(prepared, phaseDiagnostic("core_solve_started", "started", "OpenCAE Core solve started."));
+  appendPreparedPhase(prepared, phaseDiagnostic("validation", "complete", "OpenCAE Core model validated.", {
+    code: "core-model-validated"
+  }));
+  appendPreparedPhase(prepared, phaseDiagnostic("solve", "started", "OpenCAE Core solve started.", {
+    code: "core-solve-started"
+  }));
   const solverSettings = boundedSolverSettings(request.analysisType, request.solverSettings, model);
   prepared.diagnostics.push(resourceLimitsDiagnostic(request.analysisType, solverSettings));
 
@@ -109,7 +114,7 @@ export async function solveResponse(request: unknown): Promise<CloudResponse> {
       : solveCoreDynamic(model, solverSettings);
 
   if (!result.ok) {
-    appendPreparedPhase(prepared, phaseDiagnostic("core_solve_complete", "failed", result.error.message, {
+    appendPreparedPhase(prepared, phaseDiagnostic("solve", "failed", result.error.message, {
       code: result.error.code
     }));
     return {
@@ -123,7 +128,9 @@ export async function solveResponse(request: unknown): Promise<CloudResponse> {
       }
     };
   }
-  appendPreparedPhase(prepared, phaseDiagnostic("core_solve_complete", "complete", "OpenCAE Core solve completed."));
+  appendPreparedPhase(prepared, phaseDiagnostic("solve", "complete", "OpenCAE Core solve completed.", {
+    code: "core-solve-complete"
+  }));
 
   const cloudResult = stampCloudProvenance(result.result, prepared.diagnostics, prepared.artifacts);
   const resultValidation = validateCoreResult(cloudResult);
@@ -143,12 +150,16 @@ export async function solveResponse(request: unknown): Promise<CloudResponse> {
       }
     };
   }
-  cloudResult.diagnostics.push(phaseDiagnostic("result_postprocessed", "complete", "OpenCAE Core result postprocessed."));
+  cloudResult.diagnostics.push(phaseDiagnostic("postprocess", "complete", "OpenCAE Core result postprocessed.", {
+    code: "result-postprocessed"
+  }));
   if (cloudResult.artifacts?.meshSummary && typeof cloudResult.artifacts.meshSummary === "object") {
     const meshSummary = cloudResult.artifacts.meshSummary as { phaseDiagnostics?: unknown[] };
     meshSummary.phaseDiagnostics = [
       ...((meshSummary.phaseDiagnostics ?? []) as unknown[]),
-      phaseDiagnostic("result_postprocessed", "complete", "OpenCAE Core result postprocessed.")
+      phaseDiagnostic("postprocess", "complete", "OpenCAE Core result postprocessed.", {
+        code: "result-postprocessed"
+      })
     ];
   }
 
@@ -217,64 +228,106 @@ type PreparedSolveInput = {
   artifacts?: Record<string, unknown>;
 };
 
-async function prepareSolveInput(request: CloudSolveRequest): Promise<PreparedSolveInput> {
-  if (request.coreModel) return { model: request.coreModel, diagnostics: [] };
-  if (request.coreVolumeMesh && typeof request.coreVolumeMesh === "object") {
-    return { model: volumeMeshToModelJson(request.coreVolumeMesh as VolumeMeshToModelInput), diagnostics: [] };
-  }
-  if (!request.geometry) {
-    throw new CoreCloudMeshingError("geometry-required", COMPLEX_GEOMETRY_REQUIRES_CLOUD_GEOMETRY);
-  }
-  const phaseDiagnostics = [
-    phaseDiagnostic("geometry_received", "complete", `Received ${request.geometry.kind} geometry for Core Cloud meshing.`, {
-      geometryKind: request.geometry.kind,
-      sampleId: request.geometry.sampleId,
-      format: request.geometry.format
-    })
-  ];
-  let volumeMesh: CoreVolumeMeshArtifact;
-  try {
-    volumeMesh = await generateCoreVolumeMeshFromGeometry(request.geometry, request);
-    phaseDiagnostics.push(...meshPhaseDiagnostics(volumeMesh));
-  } catch (error) {
-    if (error instanceof CoreCloudMeshingError) {
-      error.diagnostics.unshift(...phaseDiagnostics, phaseDiagnostic("mesh_generation", "failed", error.message, {
-        mesherCode: error.code
-      }));
-    }
-    throw error;
-  }
+type ModelDiagnosticsBundle = {
+  diagnostics?: unknown[];
+  artifacts?: Record<string, unknown>;
+};
 
-  let model: OpenCAEModelJson;
-  try {
-    model = buildCoreModelFromCloudMesh({
-      study: request.study,
-      displayModel: request.displayModel,
-      volumeMesh,
-      material: request.material,
-      materials: request.materials,
-      analysisType: request.analysisType,
-      solverSettings: request.solverSettings
-    });
-  } catch (error) {
-    throw new CoreCloudMeshingError("model-build-failed", error instanceof Error ? error.message : String(error), {
-      diagnostics: [...phaseDiagnostics, phaseDiagnostic("core_model_built", "failed", error instanceof Error ? error.message : String(error))]
+export type ModelForRequestResult =
+  | { ok: true; model: OpenCAEModelJson; meshDiagnostics?: unknown }
+  | { ok: false; issue: ValidationIssue; diagnostics?: unknown[]; status?: number };
+
+async function prepareSolveInput(request: CloudSolveRequest): Promise<PreparedSolveInput> {
+  const modelCandidate = await modelForRequest(request);
+  if (!modelCandidate.ok) {
+    throw new CoreCloudRequestError(modelCandidate.issue, {
+      status: modelCandidate.status,
+      diagnostics: modelCandidate.diagnostics
     });
   }
-  phaseDiagnostics.push(phaseDiagnostic("core_model_built", "complete", "OpenCAE Core model built from generated volume mesh."));
-  const meshSummary = meshSummaryArtifact(volumeMesh, phaseDiagnostics);
-  const artifacts = {
-    generatedCoreModel: model,
-    meshSummary
-  };
+  const bundle = modelDiagnosticsBundle(modelCandidate.meshDiagnostics);
   return {
-    model,
-    diagnostics: [meshGenerationDiagnostic(volumeMesh), ...phaseDiagnostics],
-    artifacts
+    model: modelCandidate.model,
+    diagnostics: bundle.diagnostics ?? [],
+    artifacts: bundle.artifacts
+  };
+}
+
+export async function modelForRequest(request: CoreCloudSolveRequest): Promise<ModelForRequestResult> {
+  if (request.coreModel) return { ok: true, model: request.coreModel as OpenCAEModelJson };
+  if (request.coreVolumeMesh && typeof request.coreVolumeMesh === "object") {
+    return { ok: true, model: volumeMeshToModelJson(request.coreVolumeMesh as VolumeMeshToModelInput) };
+  }
+  if (request.geometry) {
+    try {
+      const generated = await coreModelFromGeometry(request);
+      return {
+        ok: true,
+        model: generated.model,
+        meshDiagnostics: generated.diagnostics
+      };
+    } catch (error) {
+      if (error instanceof CoreCloudMeshingError) {
+        const diagnostics = error.diagnostics.length > 0 ? error.diagnostics : [diagnosticFromIssue({
+          code: error.code,
+          message: error.message,
+          path: "$.geometry"
+        })];
+        return {
+          ok: false,
+          issue: issueFromDiagnostics(error.code, error.message, diagnostics),
+          diagnostics,
+          status: error.status
+        };
+      }
+      const message = error instanceof Error ? error.message : String(error);
+      const issue = {
+        code: "core-model-build-failed",
+        message,
+        path: "$.geometry"
+      };
+      return {
+        ok: false,
+        issue,
+        diagnostics: [diagnosticFromIssue(issue, "core_model_build")],
+        status: 422
+      };
+    }
+  }
+  return {
+    ok: false,
+    issue: {
+      code: "missing-core-model-or-geometry",
+      message: "OpenCAE Core Cloud requires coreModel, coreVolumeMesh, or geometry. No local estimate fallback was used.",
+      path: "$"
+    },
+    diagnostics: [
+      {
+        code: "missing-core-model-or-geometry",
+        phase: "request_parse",
+        message: "OpenCAE Core Cloud requires coreModel, coreVolumeMesh, or geometry. No local estimate fallback was used.",
+        path: "$"
+      }
+    ],
+    status: 422
   };
 }
 
 function solvePreparationErrorResponse(runId: string | undefined, error: unknown): CloudResponse {
+  if (error instanceof CoreCloudRequestError) {
+    return {
+      status: error.status,
+      body: {
+        ok: false,
+        runId,
+        error: {
+          code: error.issue.code,
+          message: error.issue.message
+        },
+        diagnostics: error.diagnostics
+      }
+    };
+  }
   if (error instanceof CoreCloudMeshingError) {
     const errorCode = error.code === "geometry-required"
       ? "geometry-required"
@@ -305,6 +358,48 @@ function solvePreparationErrorResponse(runId: string | undefined, error: unknown
         message: `${error instanceof Error ? error.message : String(error)} No local estimate fallback was used.`
       }
     }
+  };
+}
+
+class CoreCloudRequestError extends Error {
+  readonly issue: ValidationIssue;
+  readonly diagnostics: unknown[];
+  readonly status: number;
+
+  constructor(issue: ValidationIssue, options: { diagnostics?: unknown[]; status?: number } = {}) {
+    super(issue.message);
+    this.issue = issue;
+    this.diagnostics = options.diagnostics ?? [diagnosticFromIssue(issue)];
+    this.status = options.status ?? 422;
+  }
+}
+
+function modelDiagnosticsBundle(value: unknown): ModelDiagnosticsBundle {
+  if (!value || typeof value !== "object") return {};
+  const raw = value as ModelDiagnosticsBundle;
+  return {
+    diagnostics: Array.isArray(raw.diagnostics) ? raw.diagnostics : undefined,
+    artifacts: raw.artifacts && typeof raw.artifacts === "object" ? raw.artifacts : undefined
+  };
+}
+
+function diagnosticFromIssue(issue: Pick<ValidationIssue, "code" | "message" | "path">, phase = "request_parse"): Record<string, unknown> {
+  return {
+    code: issue.code,
+    phase,
+    message: issue.message,
+    path: issue.path
+  };
+}
+
+function issueFromDiagnostics(fallbackCode: string, fallbackMessage: string, diagnostics: unknown[]): ValidationIssue {
+  const diagnostic = diagnostics.find((value): value is { code?: unknown; message?: unknown; path?: unknown } =>
+    Boolean(value && typeof value === "object" && typeof (value as { message?: unknown }).message === "string")
+  );
+  return {
+    code: typeof diagnostic?.code === "string" ? diagnostic.code : fallbackCode,
+    message: typeof diagnostic?.message === "string" ? diagnostic.message : fallbackMessage,
+    path: typeof diagnostic?.path === "string" ? diagnostic.path : "$.geometry"
   };
 }
 

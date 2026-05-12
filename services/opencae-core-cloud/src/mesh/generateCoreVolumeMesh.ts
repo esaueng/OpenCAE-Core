@@ -12,9 +12,12 @@ export async function generateCoreVolumeMeshFromGeometry(
   request: Pick<CoreCloudSolveRequest, "analysisType" | "study" | "displayModel" | "solverSettings">
 ): Promise<CoreVolumeMeshArtifact> {
   const options: CoreCloudResourceSettings = {
-    maxUploadBytes: request.solverSettings?.maxUploadBytes
+    maxUploadBytes: typeof request.solverSettings?.maxUploadBytes === "number" ? request.solverSettings.maxUploadBytes : undefined
   };
   if (geometry.kind === "structured_block") return generateStructuredBlockCoreVolumeMesh(geometry);
+  if (geometry.kind === "sample_procedural" && (geometry.sampleId === "cantilever" || geometry.sampleId === "beam")) {
+    return generateStructuredBlockCoreVolumeMesh(geometry);
+  }
   if (geometry.kind === "sample_procedural" && geometry.sampleId === "bracket") return generateBracketCoreVolumeMesh(geometry);
   if (geometry.kind === "uploaded_cad") return generateGmshVolumeMeshFromUpload(geometry, { units: geometry.units ?? "m", ...options });
   if (geometry.kind === "uploaded_mesh") return parseUploadedMeshGeometry(geometry, { units: geometry.units ?? "m", ...options });

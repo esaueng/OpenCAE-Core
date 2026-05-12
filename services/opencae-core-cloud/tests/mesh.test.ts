@@ -71,7 +71,8 @@ describe("Core Cloud volume mesh generation", () => {
 
     expect(validateModelJson(model).ok).toBe(true);
     expect(model.meshProvenance).toMatchObject({ meshSource: "actual_volume_mesh", solver: "opencae-core-cloud", resultSource: "computed" });
-    expect(model.boundaryConditions[0]).toMatchObject({ type: "fixed", surfaceSet: "fixed_support" });
+    expect(model.boundaryConditions[0]).toMatchObject({ type: "fixed", nodeSet: "fixed_support_nodes" });
+    expect(model.nodeSets.find((set) => set.name === "fixed_support_nodes")?.nodes.length).toBeGreaterThan(0);
     expect(model.loads[0]).toMatchObject({ type: "surfaceForce", surfaceSet: "load_surface", totalForce: [0, -500, 0] });
   });
 
@@ -136,7 +137,7 @@ describe("Core Cloud volume mesh generation", () => {
     expect(() => mapSelectionToSurfaceSet({ study: aluminumStudy, volumeMesh, selectionRef: "missing", role: "fixed_support" })).toThrow(/could not map selection missing/i);
   });
 
-  test("generates a structured block mesh only for the structured_block geometry path", () => {
+  test("generates a structured block mesh with named end-face surface sets", () => {
     const mesh = generateStructuredBlockCoreVolumeMesh({
       kind: "structured_block",
       units: "mm",
@@ -146,7 +147,7 @@ describe("Core Cloud volume mesh generation", () => {
     expect(mesh.metadata.source).toBe("structured_block");
     expect(mesh.elements.length).toBeGreaterThan(0);
     expect(connectedComponents({ elementBlocks: [{ name: "solid", type: "Tet4", material: "mat", connectivity: mesh.elements.flatMap((element) => element.connectivity) }] }).componentCount).toBe(1);
-    expect(mesh.surfaceSets.map((set) => set.name)).toEqual(expect.arrayContaining(["fixed_support", "load_surface"]));
+    expect(mesh.surfaceSets.map((set) => set.name)).toEqual(expect.arrayContaining(["fixed_support", "load_surface", "x_min", "x_max"]));
   });
 
   test("routes geometry payloads through the Core volume mesh entrypoint", async () => {
@@ -171,7 +172,8 @@ describe("Core Cloud volume mesh generation", () => {
 
     expect(structured.metadata.source).toBe("structured_block");
     expect(uploaded.metadata.source).toBe("uploaded_mesh");
-    await expect(generateCoreVolumeMeshFromGeometry({ kind: "sample_procedural", sampleId: "beam" }, { analysisType: "static_stress" })).rejects.toThrow(/unsupported core cloud geometry/i);
+    const beam = await generateCoreVolumeMeshFromGeometry({ kind: "sample_procedural", sampleId: "beam" }, { analysisType: "static_stress" });
+    expect(beam.metadata.source).toBe("structured_block");
   });
 
   test("rejects uploaded CAD path traversal through runtime format values", async () => {

@@ -1,11 +1,13 @@
 import {
   OPENCAE_MODEL_SCHEMA,
   OPENCAE_MODEL_SCHEMA_VERSION,
+  nodeSetFromSurfaceSet,
   preflightCoreModel,
   validateModelJson,
   type BoundaryConditionJson,
   type IsotropicLinearElasticMaterialJson,
   type LoadJson,
+  type NodeSetJson,
   type OpenCAEModelJson,
   type StepJson,
   type SurfaceFacetJson,
@@ -64,6 +66,7 @@ export function buildCoreModelFromCloudMesh(input: BuildCoreModelInput): OpenCAE
   }];
   const elementCount = input.volumeMesh.elements.length;
   const surfaceSets = cloneSurfaceSets(input.volumeMesh.surfaceSets);
+  const nodeSets: NodeSetJson[] = [];
   const boundaryConditions: BoundaryConditionJson[] = [];
   const loads: LoadJson[] = [];
 
@@ -77,10 +80,12 @@ export function buildCoreModelFromCloudMesh(input: BuildCoreModelInput): OpenCAE
       selectionRef,
       role: "fixed_support"
     }, surfaceSets);
+    const nodeSetName = `${surfaceSet.name}_nodes`;
+    nodeSets.push({ name: nodeSetName, nodes: nodeSetFromSurfaceSet(surfaceSet, input.volumeMesh.surfaceFacets) });
     boundaryConditions.push({
       name: `fixedSupport${index}`,
       type: "fixed",
-      surfaceSet: surfaceSet.name,
+      nodeSet: nodeSetName,
       components: ["x", "y", "z"]
     });
   }
@@ -132,7 +137,9 @@ export function buildCoreModelFromCloudMesh(input: BuildCoreModelInput): OpenCAE
       selectionRef: "FS1",
       role: "fixed_support"
     }, surfaceSets);
-    boundaryConditions.push({ name: "fixedSupport0", type: "fixed", surfaceSet: surfaceSet.name, components: ["x", "y", "z"] });
+    const nodeSetName = `${surfaceSet.name}_nodes`;
+    nodeSets.push({ name: nodeSetName, nodes: nodeSetFromSurfaceSet(surfaceSet, input.volumeMesh.surfaceFacets) });
+    boundaryConditions.push({ name: "fixedSupport0", type: "fixed", nodeSet: nodeSetName, components: ["x", "y", "z"] });
   }
   if (loads.length === 0) {
     const surfaceSet = ensureMappedSurfaceSet({
@@ -151,7 +158,7 @@ export function buildCoreModelFromCloudMesh(input: BuildCoreModelInput): OpenCAE
     nodes: { coordinates: [...input.volumeMesh.nodes.coordinates] },
     materials: [material],
     elementBlocks,
-    nodeSets: [],
+    nodeSets,
     elementSets: [{ name: "allElements", elements: Array.from({ length: elementCount }, (_value, index) => index) }],
     surfaceFacets: input.volumeMesh.surfaceFacets.map((facet) => ({ ...facet, nodes: [...facet.nodes] })),
     surfaceSets,
@@ -163,7 +170,7 @@ export function buildCoreModelFromCloudMesh(input: BuildCoreModelInput): OpenCAE
       kind: "opencae_core_fea",
       solver: "opencae-core-cloud",
       resultSource: "computed",
-      meshSource: "actual_volume_mesh"
+      meshSource: input.volumeMesh.metadata.source === "structured_block" ? "structured_block_core" : "actual_volume_mesh"
     }
   };
   const validation = validateModelJson(model);
