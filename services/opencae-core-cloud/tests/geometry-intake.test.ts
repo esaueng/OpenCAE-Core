@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import { nodeSetFromSurfaceSet, validateModelJson, type CoreSolveResult } from "@opencae/core";
 import { solveCoreStatic } from "@opencae/solver-cpu";
+import { coreModelFromGeometry } from "../src/coreModelFromGeometry";
 import { modelForRequest, solveResponse } from "../src/server";
 import type { CoreCloudSolveRequest } from "../src/types";
 
@@ -33,7 +34,9 @@ describe("Core Cloud geometry intake", () => {
     expect(fixedSet?.facets.length).toBeGreaterThan(0);
     expect(loadSet?.facets.length).toBeGreaterThan(0);
     expect(nodeSetFromSurfaceSet(fixedSet!, candidate.model.surfaceFacets ?? []).length).toBeGreaterThan(0);
-    expect(candidate.meshDiagnostics).toEqual(expect.anything());
+    expect(candidate.diagnostics).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: "structured-block-model-generated", phase: "geometry_to_core_model" })
+    ]));
   });
 
   test("modelForRequest builds a Core model from cantilever sample geometry", async () => {
@@ -50,6 +53,66 @@ describe("Core Cloud geometry intake", () => {
     if (!candidate.ok) return;
     expect(validateModelJson(candidate.model).ok).toBe(true);
     expect(candidate.model.loads[0]).toMatchObject({ type: "surfaceForce", surfaceSet: "load_surface" });
+  });
+
+  test("structured block uses explicit descriptor surface mapping", async () => {
+    const candidate = await modelForRequest(cantileverGeometryRequest({
+      geometry: {
+        kind: "structured_block",
+        units: "mm",
+        descriptor: {
+          dimensions: { length: 180, width: 24, height: 24 },
+          surfaces: {
+            fixedSupport: "x_max",
+            loadSurface: "x_min"
+          }
+        }
+      }
+    }));
+
+    expect(candidate.ok).toBe(true);
+    if (!candidate.ok) return;
+
+    const fixedSet = candidate.model.surfaceSets?.find((set) => set.name === "fixed_support");
+    const loadSet = candidate.model.surfaceSets?.find((set) => set.name === "load_surface");
+    expect(fixedSet?.facets).toEqual(candidate.model.surfaceSets?.find((set) => set.name === "x_max")?.facets);
+    expect(loadSet?.facets).toEqual(candidate.model.surfaceSets?.find((set) => set.name === "x_min")?.facets);
+  });
+
+  test("cantilever can use display model dimensions when descriptor dimensions are absent", async () => {
+    const candidate = await modelForRequest(cantileverGeometryRequest({
+      displayModel: { dimensions: { length: 200, width: 24, height: 24 } },
+      geometry: {
+        kind: "sample_procedural",
+        sampleId: "cantilever",
+        units: "mm",
+        descriptor: {}
+      }
+    }));
+
+    expect(candidate.ok).toBe(true);
+    if (!candidate.ok) return;
+    expect(Math.max(...xCoordinates(candidate.model.nodes.coordinates))).toBeCloseTo(0.2);
+  });
+
+  test("arbitrary structured blocks without explicit surface mapping fail closed", async () => {
+    const candidate = await modelForRequest({
+      analysisType: "static_stress",
+      geometry: {
+        kind: "structured_block",
+        units: "mm",
+        descriptor: { dimensions: { length: 180, width: 24, height: 24 } }
+      }
+    });
+
+    expect(candidate).toMatchObject({
+      ok: false,
+      issue: {
+        code: "surface-mapping-required",
+        message: "Structured block geometry requires explicit fixed/load surface mapping unless it is a known cantilever or beam sample.",
+        path: "$.geometry.descriptor.surfaces"
+      }
+    });
   });
 
   test("modelForRequest reports missing model mesh or geometry", async () => {
@@ -111,8 +174,8 @@ describe("Core Cloud geometry intake", () => {
     );
   });
 
-  test("unsupported bracket geometry returns a specific meshing diagnostic when unavailable", async () => {
-    const candidate = await modelForRequest(cantileverGeometryRequest({
+  test("coreModelFromGeometry returns a diagnostic union instead of throwing for unsupported geometry", async () => {
+    const candidate = await coreModelFromGeometry(cantileverGeometryRequest({
       geometry: {
         kind: "sample_procedural",
         sampleId: "bracket",
@@ -121,11 +184,11 @@ describe("Core Cloud geometry intake", () => {
     }));
 
     if (candidate.ok) return;
-    expect(candidate.issue).toMatchObject({
+    expect(candidate.issue).toEqual(expect.objectContaining({
       code: expect.any(String),
       message: expect.stringContaining("No local estimate fallback was used"),
       path: "$.geometry"
-    });
+    }));
   });
 
   test("empty structured block load mapping returns a surface_mapping diagnostic", async () => {

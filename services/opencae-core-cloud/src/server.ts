@@ -228,13 +228,8 @@ type PreparedSolveInput = {
   artifacts?: Record<string, unknown>;
 };
 
-type ModelDiagnosticsBundle = {
-  diagnostics?: unknown[];
-  artifacts?: Record<string, unknown>;
-};
-
 export type ModelForRequestResult =
-  | { ok: true; model: OpenCAEModelJson; meshDiagnostics?: unknown }
+  | { ok: true; model: OpenCAEModelJson; diagnostics?: unknown[]; artifacts?: Record<string, unknown> }
   | { ok: false; issue: ValidationIssue; diagnostics?: unknown[]; status?: number };
 
 async function prepareSolveInput(request: CloudSolveRequest): Promise<PreparedSolveInput> {
@@ -245,11 +240,10 @@ async function prepareSolveInput(request: CloudSolveRequest): Promise<PreparedSo
       diagnostics: modelCandidate.diagnostics
     });
   }
-  const bundle = modelDiagnosticsBundle(modelCandidate.meshDiagnostics);
   return {
     model: modelCandidate.model,
-    diagnostics: bundle.diagnostics ?? [],
-    artifacts: bundle.artifacts
+    diagnostics: modelCandidate.diagnostics ?? [],
+    artifacts: modelCandidate.artifacts
   };
 }
 
@@ -259,40 +253,7 @@ export async function modelForRequest(request: CoreCloudSolveRequest): Promise<M
     return { ok: true, model: volumeMeshToModelJson(request.coreVolumeMesh as VolumeMeshToModelInput) };
   }
   if (request.geometry) {
-    try {
-      const generated = await coreModelFromGeometry(request);
-      return {
-        ok: true,
-        model: generated.model,
-        meshDiagnostics: generated.diagnostics
-      };
-    } catch (error) {
-      if (error instanceof CoreCloudMeshingError) {
-        const diagnostics = error.diagnostics.length > 0 ? error.diagnostics : [diagnosticFromIssue({
-          code: error.code,
-          message: error.message,
-          path: "$.geometry"
-        })];
-        return {
-          ok: false,
-          issue: issueFromDiagnostics(error.code, error.message, diagnostics),
-          diagnostics,
-          status: error.status
-        };
-      }
-      const message = error instanceof Error ? error.message : String(error);
-      const issue = {
-        code: "core-model-build-failed",
-        message,
-        path: "$.geometry"
-      };
-      return {
-        ok: false,
-        issue,
-        diagnostics: [diagnosticFromIssue(issue, "core_model_build")],
-        status: 422
-      };
-    }
+    return coreModelFromGeometry(request);
   }
   return {
     ok: false,
@@ -374,32 +335,12 @@ class CoreCloudRequestError extends Error {
   }
 }
 
-function modelDiagnosticsBundle(value: unknown): ModelDiagnosticsBundle {
-  if (!value || typeof value !== "object") return {};
-  const raw = value as ModelDiagnosticsBundle;
-  return {
-    diagnostics: Array.isArray(raw.diagnostics) ? raw.diagnostics : undefined,
-    artifacts: raw.artifacts && typeof raw.artifacts === "object" ? raw.artifacts : undefined
-  };
-}
-
 function diagnosticFromIssue(issue: Pick<ValidationIssue, "code" | "message" | "path">, phase = "request_parse"): Record<string, unknown> {
   return {
     code: issue.code,
     phase,
     message: issue.message,
     path: issue.path
-  };
-}
-
-function issueFromDiagnostics(fallbackCode: string, fallbackMessage: string, diagnostics: unknown[]): ValidationIssue {
-  const diagnostic = diagnostics.find((value): value is { code?: unknown; message?: unknown; path?: unknown } =>
-    Boolean(value && typeof value === "object" && typeof (value as { message?: unknown }).message === "string")
-  );
-  return {
-    code: typeof diagnostic?.code === "string" ? diagnostic.code : fallbackCode,
-    message: typeof diagnostic?.message === "string" ? diagnostic.message : fallbackMessage,
-    path: typeof diagnostic?.path === "string" ? diagnostic.path : "$.geometry"
   };
 }
 

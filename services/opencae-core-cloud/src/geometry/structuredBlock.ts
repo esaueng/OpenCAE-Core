@@ -9,7 +9,8 @@ type StructuredBlockFaceId = typeof FACE_IDS[number];
 
 export function structuredBlockCoreModelFromRequest(request: CoreCloudSolveRequest): {
   model: OpenCAEModelJson;
-  diagnostics: unknown;
+  diagnostics: unknown[];
+  artifacts?: Record<string, unknown>;
 } {
   const volumeMesh = generateStructuredBlockCoreVolumeMeshFromRequest(request);
   const model = buildCoreModelFromCloudMesh({
@@ -42,21 +43,19 @@ export function structuredBlockCoreModelFromRequest(request: CoreCloudSolveReque
   };
   return {
     model,
-    diagnostics: {
-      artifacts: {
-        generatedCoreModel: model,
-        meshSummary: meshSummaryArtifact(volumeMesh, [generated])
-      },
-      diagnostics: [
-        meshGenerationDiagnostic(volumeMesh),
-        generated
-      ]
-    }
+    artifacts: {
+      generatedCoreModel: model,
+      meshSummary: meshSummaryArtifact(volumeMesh, [generated])
+    },
+    diagnostics: [
+      meshGenerationDiagnostic(volumeMesh),
+      generated
+    ]
   };
 }
 
 export function generateStructuredBlockCoreVolumeMesh(geometry: CloudGeometrySource): CoreVolumeMeshArtifact {
-  return structuredBlockVolumeMesh(geometry, {
+  return structuredBlockVolumeMesh(geometry, undefined, {
     fixedFace: "x_min",
     loadFace: "x_max"
   });
@@ -68,19 +67,38 @@ function generateStructuredBlockCoreVolumeMeshFromRequest(request: CoreCloudSolv
     throw new Error("Structured block Core model generation requires structured_block, cantilever, or beam geometry.");
   }
   const descriptor = blockDescriptor(geometry);
-  const fixedFace = resolveStructuredBlockFace(request, "fixed_support", descriptor) ?? "x_min";
-  const loadFace = resolveStructuredBlockFace(request, "load_surface", descriptor) ?? "x_max";
-  assertKnownFace(fixedFace, "fixed-support-empty", "surface_mapping", "Fixed selection FS1 did not map to any structured block surface facets.", "$.study.constraints[0].selectionRef");
-  assertKnownFace(loadFace, "load-surface-empty", "surface_mapping", "Load selection L1 did not map to any structured block surface facets.", "$.study.loads[0].selectionRef");
-  return structuredBlockVolumeMesh(geometry, { fixedFace, loadFace });
+  const fixedFace = resolveStructuredBlockFace(request, "fixed_support", descriptor);
+  const loadFace = resolveStructuredBlockFace(request, "load_surface", descriptor);
+  if ((!fixedFace || !loadFace) && !isKnownStructuredBlockSample(geometry)) {
+    throw new CoreCloudMeshingError(
+      "surface-mapping-required",
+      "Structured block geometry requires explicit fixed/load surface mapping unless it is a known cantilever or beam sample.",
+      {
+        diagnostics: [
+          {
+            code: "surface-mapping-required",
+            phase: "surface_mapping",
+            message: "Structured block geometry requires explicit fixed/load surface mapping unless it is a known cantilever or beam sample.",
+            path: "$.geometry.descriptor.surfaces"
+          }
+        ]
+      }
+    );
+  }
+  const resolvedFixedFace = fixedFace ?? "x_min";
+  const resolvedLoadFace = loadFace ?? "x_max";
+  assertKnownFace(resolvedFixedFace, "fixed-support-empty", "surface_mapping", "Fixed selection FS1 did not map to any structured block surface facets.", "$.study.constraints[0].selectionRef");
+  assertKnownFace(resolvedLoadFace, "load-surface-empty", "surface_mapping", "Load selection L1 did not map to any structured block surface facets.", "$.study.loads[0].selectionRef");
+  return structuredBlockVolumeMesh(geometry, request.displayModel, { fixedFace: resolvedFixedFace, loadFace: resolvedLoadFace });
 }
 
 function structuredBlockVolumeMesh(
   geometry: CloudGeometrySource,
+  displayModel: unknown,
   mapping: { fixedFace: StructuredBlockFaceId; loadFace: StructuredBlockFaceId }
 ): CoreVolumeMeshArtifact {
   const descriptor = blockDescriptor(geometry);
-  const dimensions = resolveDimensions(geometry, descriptor);
+  const dimensions = resolveDimensions(geometry, descriptor, displayModel);
   const scale = geometry.units === "m" ? 1 : 0.001;
   const length = dimensions.length * scale;
   const width = dimensions.width * scale;
@@ -165,9 +183,9 @@ function blockDescriptor(geometry: CloudGeometrySource): Record<string, unknown>
   return geometry.descriptor ?? geometry.geometryDescriptor ?? {};
 }
 
-function resolveDimensions(geometry: CloudGeometrySource, descriptor: Record<string, unknown>): { length: number; width: number; height: number } {
+function resolveDimensions(geometry: CloudGeometrySource, descriptor: Record<string, unknown>, displayModel: unknown): { length: number; width: number; height: number } {
   const dimensions = objectValue(descriptor.dimensions);
-  const displayDimensions = objectValue(descriptor.displayDimensions);
+  const displayDimensions = objectValue(descriptor.displayDimensions) ?? objectValue(objectValue(displayModel)?.dimensions);
   const source = dimensions ?? displayDimensions ?? descriptor;
   const sampleDefaults = geometry.kind === "sample_procedural" && geometry.sampleId === "cantilever"
     ? { length: 180, width: 24, height: 24 }
@@ -186,6 +204,12 @@ function resolveStructuredBlockFace(
   role: "fixed_support" | "load_surface",
   descriptor: Record<string, unknown>
 ): string | undefined {
+  const surfaces = objectValue(descriptor.surfaces);
+  const surfaceFace = role === "fixed_support"
+    ? stringValue(surfaces?.fixedSupport ?? surfaces?.fixed_support ?? surfaces?.support)
+    : stringValue(surfaces?.loadSurface ?? surfaces?.load_surface ?? surfaces?.load);
+  if (surfaceFace) return normalizeFaceId(surfaceFace);
+
   const descriptorFace = role === "fixed_support"
     ? stringValue(descriptor.fixedFace ?? descriptor.supportFace ?? descriptor.fixedSupportFace)
     : stringValue(descriptor.loadFace ?? descriptor.forceFace ?? descriptor.loadSurfaceFace);
@@ -208,6 +232,10 @@ function resolveStructuredBlockFace(
     if (face) return face;
   }
   return undefined;
+}
+
+function isKnownStructuredBlockSample(geometry: CloudGeometrySource): boolean {
+  return geometry.sampleId === "cantilever" || geometry.sampleId === "beam";
 }
 
 function normalizeFaceId(value: string | undefined): string | undefined {
